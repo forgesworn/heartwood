@@ -36,7 +36,8 @@ Scan the `.onion` address with any NIP-46 compatible Nostr client (Damus, Primal
 ### heartwood-core
 
 ```rust
-use heartwood_core::{from_mnemonic, from_nsec, derive, derive_persona,
+use heartwood_core::{from_mnemonic, from_nsec, npub_from_nsec, derive,
+                     derive_from_identity, derive_persona, derive_from_persona,
                      create_blind_proof, create_full_proof, verify_proof,
                      recover, encode_npub, encode_nsec, decode_npub, decode_nsec};
 
@@ -50,6 +51,15 @@ println!("{}", identity.nsec); // nsec1...
 
 // Derive a named persona
 let persona = derive_persona(&root, "work", None)?;
+
+// Derive a sub-identity from an existing identity
+let sub = derive_from_identity(&root, &identity, "notifications", 0)?;
+
+// Derive a sub-identity from a persona
+let sub = derive_from_persona(&root, &persona, "dms", 0)?;
+
+// Get the npub for a bare nsec (bunker mode -- no tree derivation)
+let npub = npub_from_nsec("nsec1...")?;
 
 // Prove ownership of a child key (blind = no purpose/index revealed)
 let proof = create_blind_proof(&root, &identity)?;
@@ -99,14 +109,13 @@ Heartwood routes all NIP-46 traffic through Tor. Connect via the `.onion` addres
 - Nsec filtering on all NIP-46 responses (private keys cannot leak through the protocol layer)
 - Session expiry (10 min idle), max 32 concurrent sessions, hex pubkey validation
 - Method-level permissions: privileged operations (derive, recover, create proof) require explicit client opt-in
-- Storage encrypted with LUKS AES-256; unlocked by PIN on boot
+- Storage files written with 0600 permissions (owner-only); secure zero-overwrite on deletion
 - NIP-46 messages are NIP-44 encrypted end-to-end
 - Tor hidden service -- no clearnet exposure, no IP address, no port forwarding
-- Per-client kind permissions: e.g. "client A may sign kind 1 but not kind 0"
-- Rate limiting per client session (default 60 req/min)
-- CORS restricted to same-origin (no cross-origin API access)
-- Duress PIN triggers decoy persona and silent wipe
-- Security audited: 20 findings across crypto, protocol, device, and CI/CD -- all CRITICAL and HIGH resolved. 55 tests.
+- Per-client kind permissions: e.g. "client A may sign kind 1 but not kind 0" (types implemented, wiring in progress)
+- Rate limiting per client session (types implemented, wiring in progress)
+- No cross-origin API access (CORS removed; all UI requests are same-origin)
+- 55 tests including frozen protocol vectors cross-validated against TypeScript reference implementation
 
 ## Competitors
 
