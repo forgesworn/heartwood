@@ -1,4 +1,9 @@
 # Heartwood Tor hidden service configuration
 # Copy to /etc/tor/torrc.d/heartwood.conf
+
+# Disable SOCKS proxy — Heartwood only needs a hidden service,
+# not outbound Tor routing. Prevents the Pi being used as an open proxy.
+SocksPort 0
+
 HiddenServiceDir /var/lib/tor/heartwood/
 HiddenServicePort 80 127.0.0.1:3000
