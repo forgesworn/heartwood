@@ -35,3 +35,10 @@ fn max_length_purpose_passes() {
     let max = "a".repeat(255);
     assert!(validate_purpose(&max).is_ok());
 }
+
+#[test]
+fn pipe_in_purpose_fails() {
+    assert!(validate_purpose("evil|9999").is_err());
+    assert!(validate_purpose("|").is_err());
+    assert!(validate_purpose("social|0").is_err());
+}

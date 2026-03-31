@@ -9,7 +9,9 @@ User=heartwood
 Group=heartwood
 ExecStart=/usr/local/bin/heartwood
 Restart=always
-RestartSec=5
+RestartSec=10
+StartLimitBurst=5
+StartLimitIntervalSec=60
 Environment=RUST_LOG=info
 
 # Security hardening
@@ -18,6 +20,23 @@ ProtectHome=true
 ReadWritePaths=/var/lib/heartwood
 NoNewPrivileges=true
 PrivateTmp=true
+
+# Capability and syscall restrictions
+CapabilityBoundingSet=
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+
+# Device access (only I2C for OLED display)
+DevicePolicy=closed
+DeviceAllow=/dev/i2c-1 rw
 
 [Install]
 WantedBy=multi-user.target

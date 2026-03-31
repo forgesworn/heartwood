@@ -13,13 +13,13 @@ type HmacSha256 = Hmac<Sha256>;
 ///
 /// Derives the BIP-340 x-only public key and encodes it as npub.
 /// Takes the secret by reference to avoid copying it onto the stack.
-pub fn create_tree_root(secret: &[u8; 32]) -> Result<TreeRoot, HeartwoodError> {
+pub(crate) fn create_tree_root(secret: &[u8; 32]) -> Result<TreeRoot, HeartwoodError> {
     let signing_key = SigningKey::from_bytes(secret)
         .map_err(|e| HeartwoodError::Derivation(format!("invalid secret key: {e}")))?;
     let verifying_key = signing_key.verifying_key();
     let pubkey_bytes: [u8; 32] = verifying_key.to_bytes().into();
     let master_pubkey = encode_npub(&pubkey_bytes);
-    Ok(TreeRoot::new(*secret, master_pubkey))
+    Ok(TreeRoot::new(zeroize::Zeroizing::new(*secret), master_pubkey))
 }
 
 /// Create a TreeRoot from raw nsec bytes using the HMAC intermediate.
@@ -40,8 +40,10 @@ pub fn from_nsec_bytes(nsec_bytes: &[u8; 32]) -> Result<TreeRoot, HeartwoodError
 
 /// Create a TreeRoot from a bech32-encoded nsec string.
 pub fn from_nsec(nsec: &str) -> Result<TreeRoot, HeartwoodError> {
-    let nsec_bytes = decode_nsec(nsec)?;
-    from_nsec_bytes(&nsec_bytes)
+    let mut nsec_bytes = decode_nsec(nsec)?;
+    let result = from_nsec_bytes(&nsec_bytes);
+    nsec_bytes.zeroize();
+    result
 }
 
 /// Create a TreeRoot from a BIP-39 mnemonic phrase.

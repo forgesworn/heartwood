@@ -28,9 +28,9 @@ jobs:
             asset: heartwood-x86_64-linux
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           targets: ${{ matrix.target }}
 
@@ -47,7 +47,7 @@ jobs:
           echo '[target.aarch64-unknown-linux-gnu]' >> .cargo/config.toml
           echo 'linker = "aarch64-linux-gnu-gcc"' >> .cargo/config.toml
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           key: ${{ matrix.target }}
 
@@ -60,7 +60,7 @@ jobs:
           chmod +x ${{ matrix.asset }}
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ matrix.asset }}
           path: ${{ matrix.asset }}
@@ -70,12 +70,23 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: artifacts
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          for dir in heartwood-*/; do
+            binary="${dir%/}"
+            if [ -f "$dir/$binary" ]; then
+              sha256sum "$dir/$binary" | sed "s|$dir/||" >> SHA256SUMS
+            fi
+          done
+          cat SHA256SUMS
 
       - name: Create install script
         run: |
@@ -96,11 +107,34 @@ jobs:
 
           # Get latest release URL
           REPO="forgesworn/heartwood"
-          TAG=$(curl -sL "https://api.github.com/repos/$REPO/releases/latest" | grep '"tag_name"' | head -1 | cut -d'"' -f4)
-          URL="https://github.com/$REPO/releases/download/$TAG/$ASSET"
+          if command -v jq &> /dev/null; then
+            TAG=$(curl -sL "https://api.github.com/repos/$REPO/releases/latest" | jq -r .tag_name)
+          else
+            TAG=$(curl -sL "https://api.github.com/repos/$REPO/releases/latest" | grep '"tag_name"' | head -1 | cut -d'"' -f4)
+          fi
+          if [ -z "$TAG" ]; then
+            echo "ERROR: Could not determine latest release tag"; exit 1
+          fi
+          BASE_URL="https://github.com/$REPO/releases/download/$TAG"
+
+          TMPDIR=$(mktemp -d)
+          trap 'rm -rf "$TMPDIR"' EXIT
 
           echo "Downloading Heartwood $TAG for $ARCH..."
-          sudo curl -sL "$URL" -o /usr/local/bin/heartwood
+          curl -sL "$BASE_URL/$ASSET" -o "$TMPDIR/$ASSET"
+          curl -sL "$BASE_URL/SHA256SUMS" -o "$TMPDIR/SHA256SUMS"
+
+          # Verify binary integrity
+          echo "Verifying SHA-256 checksum..."
+          cd "$TMPDIR"
+          if ! grep "$ASSET" SHA256SUMS | sha256sum -c --quiet 2>/dev/null; then
+            echo "ERROR: Checksum verification FAILED. Aborting."
+            exit 1
+          fi
+          echo "Checksum verified."
+          cd /
+
+          sudo cp "$TMPDIR/$ASSET" /usr/local/bin/heartwood
           sudo chmod +x /usr/local/bin/heartwood
 
           # Install Tor if not present
@@ -135,13 +169,28 @@ jobs:
           Group=heartwood
           ExecStart=/usr/local/bin/heartwood
           Restart=always
-          RestartSec=5
+          RestartSec=10
+          StartLimitBurst=5
+          StartLimitIntervalSec=60
           Environment=RUST_LOG=info
           ProtectSystem=strict
           ProtectHome=true
           ReadWritePaths=/var/lib/heartwood
           NoNewPrivileges=true
           PrivateTmp=true
+          CapabilityBoundingSet=
+          SystemCallFilter=@system-service
+          SystemCallErrorNumber=EPERM
+          MemoryDenyWriteExecute=true
+          RestrictRealtime=true
+          RestrictSUIDSGID=true
+          LockPersonality=true
+          ProtectKernelTunables=true
+          ProtectKernelModules=true
+          ProtectControlGroups=true
+          RestrictNamespaces=true
+          DevicePolicy=closed
+          DeviceAllow=/dev/i2c-1 rw
 
           [Install]
           WantedBy=multi-user.target
@@ -176,10 +225,11 @@ jobs:
           chmod +x artifacts/install.sh
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe # v2
         with:
           generate_release_notes: true
           files: |
             artifacts/heartwood-aarch64-linux/heartwood-aarch64-linux
             artifacts/heartwood-x86_64-linux/heartwood-x86_64-linux
+            artifacts/SHA256SUMS
             artifacts/install.sh

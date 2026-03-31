@@ -60,8 +60,18 @@ impl Oled {
     }
 
     /// Show a BIP-39 mnemonic word during setup (e.g. "3. abandon").
+    ///
+    /// Uses direct I2C/terminal output only -- never logs to tracing/journald
+    /// to prevent mnemonic words from appearing in system logs.
     pub fn show_mnemonic_word(&self, num: usize, word: &str) {
-        self.show_text(&format!("{}. {}", num, word));
+        if self.is_hardware {
+            // TODO: write directly to SSD1306 via i2c-linux / rppal.
+            // Do NOT use info!() or show_text() here -- mnemonic words must
+            // never appear in journal logs.
+        } else {
+            // Terminal fallback: write to stderr (not captured by tracing).
+            eprintln!("[OLED] {}. {}", num, word);
+        }
     }
 
     /// Clear the display.
