@@ -244,13 +244,58 @@ A faithful port of the TypeScript nsec-tree library to Rust:
 Existing Nostr users create a fresh Heartwood identity and prove the link to their old npub:
 
 1. Heartwood generates new mnemonic (new master, clean chain of custody)
-2. Old signer (Amber, nsec.app, whatever) signs: "I'm migrating to [new npub]"
-3. Heartwood signs: "I accept migration from [old npub]"
+2. Old signer (Amber, nsec.app, whatever) signs the migration intent event
+3. Heartwood signs the migration acceptance event
 4. Both events published to relays
 5. Old key retired. New key was born in hardware.
 6. Clients that understand migration events transfer follower/reputation data.
 
 The old nsec never touches Heartwood. It stays in whatever signer it was in, signs one migration event, and is retired.
+
+#### Migration event format
+
+Two replaceable kind 30078 (NIP-78 application-specific data) events, one from each party. Replaceable semantics mean re-migration overwrites cleanly.
+
+**Event 1: Migration Intent** (signed by old key)
+
+```json
+{
+  "kind": 30078,
+  "tags": [
+    ["d", "heartwood-migration:<new-npub>"],
+    ["p", "<new-pubkey-hex>"],
+    ["L", "heartwood"],
+    ["l", "migration-intent", "heartwood"]
+  ],
+  "content": "{\"type\":\"migration-intent\",\"to\":\"<new-npub>\"}"
+}
+```
+
+**Event 2: Migration Acceptance** (signed by new key, on Heartwood)
+
+```json
+{
+  "kind": 30078,
+  "tags": [
+    ["d", "heartwood-migration-accept:<old-pubkey-hex>"],
+    ["p", "<old-pubkey-hex>"],
+    ["e", "<migration-intent-event-id>"],
+    ["L", "heartwood"],
+    ["l", "migration-accept", "heartwood"]
+  ],
+  "content": "{\"type\":\"migration-acceptance\",\"from\":\"<old-npub>\",\"to\":\"<new-npub>\"}"
+}
+```
+
+| Field | Purpose |
+|-------|---------|
+| `d` tag | Scopes within kind 30078 namespace. Prefix `heartwood-migration:` / `heartwood-migration-accept:` |
+| `p` tag | Points to the other party, enabling relay routing |
+| `e` tag | On acceptance only. Links to the intent event, creating a verifiable chain |
+| `L`/`l` tags | NIP-32 labels. Makes migrations discoverable via relay label queries |
+| `content` | JSON with `type` field for forward compatibility |
+
+**Verification:** A client verifying a migration checks that both events exist, the `p` tags cross-reference correctly, the `e` tag on the acceptance matches the intent event ID, and both signatures are valid.
 
 ## Ecosystem Integration
 
