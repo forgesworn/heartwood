@@ -798,8 +798,8 @@ fn blind_proof_round_trip() {
     assert!(proof.purpose.is_none());
     assert!(proof.index.is_none());
 
-    // Attestation format: "nsec-tree:own:{master_hex}:{child_hex}"
-    assert!(proof.attestation.starts_with("nsec-tree:own:"));
+    // Attestation format: "nsec-tree:own|{master_hex}|{child_hex}"
+    assert!(proof.attestation.starts_with("nsec-tree:own|"));
     assert_eq!(proof.signature.len(), 128); // 64 bytes as hex
 
     // Verify
@@ -818,9 +818,9 @@ fn full_proof_round_trip() {
     assert_eq!(proof.purpose.as_deref(), Some("social"));
     assert_eq!(proof.index, Some(0));
 
-    // Attestation format: "nsec-tree:link:{master_hex}:{child_hex}:social:0"
-    assert!(proof.attestation.starts_with("nsec-tree:link:"));
-    assert!(proof.attestation.ends_with(":social:0"));
+    // Attestation format: "nsec-tree:link|{master_hex}|{child_hex}|social|0"
+    assert!(proof.attestation.starts_with("nsec-tree:link|"));
+    assert!(proof.attestation.ends_with("|social|0"));
 
     // Verify
     assert!(verify_proof(&proof).unwrap());
@@ -833,7 +833,7 @@ fn tampered_attestation_fails_verification() {
     let child = derive(&root, "social", Some(0)).unwrap();
 
     let mut proof = create_blind_proof(&root, &child).unwrap();
-    proof.attestation = "nsec-tree:own:0000:0000".to_string();
+    proof.attestation = "nsec-tree:own|0000|0000".to_string();
 
     assert!(!verify_proof(&proof).unwrap());
 }
@@ -860,7 +860,7 @@ pub fn create_blind_proof(
     let master_hex = master_hex_from_root(root)?;
     let child_hex = bytes_to_hex(&child.public_key);
 
-    let attestation = format!("nsec-tree:own:{}:{}", master_hex, child_hex);
+    let attestation = format!("nsec-tree:own|{}|{}", master_hex, child_hex);
     let signature = sign_attestation(root, &attestation)?;
 
     Ok(LinkageProof {
@@ -882,7 +882,7 @@ pub fn create_full_proof(
     let child_hex = bytes_to_hex(&child.public_key);
 
     let attestation = format!(
-        "nsec-tree:link:{}:{}:{}:{}",
+        "nsec-tree:link|{}|{}|{}|{}",
         master_hex, child_hex, child.purpose, child.index
     );
     let signature = sign_attestation(root, &attestation)?;
