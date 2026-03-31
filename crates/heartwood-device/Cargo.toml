@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Heartwood device binary for Raspberry Pi"
+keywords = ["nostr", "raspberry-pi", "signing", "tor", "hardware"]
+categories = ["cryptography", "command-line-utilities"]
 
 [dependencies]
 heartwood-core = { path = "../heartwood-core" }

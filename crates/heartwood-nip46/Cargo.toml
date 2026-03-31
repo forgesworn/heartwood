@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "NIP-46 remote signing server with Heartwood extensions"
+keywords = ["nostr", "nip46", "remote-signing", "identity", "tor"]
+categories = ["cryptography", "authentication"]
 
 [dependencies]
 heartwood-core = { path = "../heartwood-core" }

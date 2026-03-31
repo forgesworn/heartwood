@@ -13,7 +13,7 @@ The workspace has three crates:
 |---------|---------|
 | `cargo build` | Debug build (all crates) |
 | `cargo build --release -p heartwood-device` | Release binary for Pi deployment |
-| `cargo test` | Full test suite (40+ tests) |
+| `cargo test` | Full test suite (55 tests) |
 | `cargo test -p heartwood-core` | Core crypto tests only |
 | `cargo run -p heartwood-device` | Run device binary locally (terminal mode) |
 | `cargo clippy --all-targets` | Lint |
