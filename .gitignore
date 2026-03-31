@@ -1,3 +1,10 @@
 /target
 .idea
 Cargo.lock
+
+# Private design docs (public docs like QUICKSTART.md are allowed)
+docs/specs/
+docs/plans/
+
+# Node dependencies
+bunker/node_modules/

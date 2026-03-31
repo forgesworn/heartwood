@@ -1,0 +1,13 @@
+{
+  "name": "heartwood-bunker",
+  "version": "0.1.0",
+  "description": "NIP-46 remote signer sidecar for Heartwood",
+  "type": "module",
+  "scripts": {
+    "start": "node index.mjs"
+  },
+  "dependencies": {
+    "nostr-tools": "^2.23.0",
+    "ws": "^8.20.0"
+  }
+}

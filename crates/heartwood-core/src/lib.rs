@@ -13,5 +13,5 @@ pub use encoding::{decode_npub, decode_nsec, encode_npub, encode_nsec};
 pub use persona::{derive_from_persona, derive_persona};
 pub use proof::{create_blind_proof, create_full_proof, verify_proof};
 pub use recover::recover;
-pub use root::{from_mnemonic, from_nsec, from_nsec_bytes};
+pub use root::{from_mnemonic, from_nsec, from_nsec_bytes, npub_from_nsec};
 pub use types::{HeartwoodError, Identity, LinkageProof, Persona, TreeRoot};

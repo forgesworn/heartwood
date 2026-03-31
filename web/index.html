@@ -7,24 +7,432 @@
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: system-ui, sans-serif; background: #0a0a0a; color: #e0e0e0; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
-        .container { max-width: 480px; padding: 2rem; text-align: center; }
-        h1 { font-size: 2.5rem; margin-bottom: 1rem; }
-        p { font-size: 1.2rem; line-height: 1.6; opacity: 0.8; }
-        .status { margin-top: 2rem; padding: 1rem; background: #1a1a1a; border-radius: 8px; font-family: monospace; font-size: 1.1rem; }
+        .container { max-width: 560px; width: 100%; padding: 2rem; }
+        h1 { font-size: 2.5rem; text-align: center; margin-bottom: 0.3rem; }
+        .subtitle { text-align: center; font-size: 1.1rem; opacity: 0.5; margin-bottom: 1.5rem; }
+        .status-bar { padding: 0.6rem 1rem; background: #1a1a1a; border-radius: 6px; font-family: monospace; font-size: 0.9rem; text-align: center; margin-bottom: 2rem; }
+
+        /* Mode cards */
+        .mode-cards { display: flex; flex-direction: column; gap: 0.75rem; margin-bottom: 1.5rem; }
+        .mode-card { padding: 1rem 1.2rem; background: #141414; border: 2px solid #2a2a2a; border-radius: 8px; cursor: pointer; transition: border-color 0.15s; }
+        .mode-card:hover { border-color: #444; }
+        .mode-card.selected { border-color: #1a6b35; background: #0d1a12; }
+        .mode-card h3 { font-size: 1rem; margin-bottom: 0.3rem; }
+        .mode-card p { font-size: 0.82rem; opacity: 0.55; line-height: 1.4; }
+        .mode-card .badge { display: inline-block; font-size: 0.7rem; padding: 0.15rem 0.5rem; border-radius: 3px; background: #1a6b35; color: #ccc; margin-left: 0.5rem; vertical-align: middle; }
+        .mode-card .badge.advanced { background: #333; }
+
+        /* Form fields */
+        .fields { margin-bottom: 1rem; }
+        .field { margin-bottom: 0.75rem; }
+        label { display: block; font-size: 0.82rem; opacity: 0.6; margin-bottom: 0.25rem; }
+        textarea, input[type="password"] { width: 100%; padding: 0.65rem; background: #111; border: 1px solid #333; border-radius: 6px; color: #e0e0e0; font-family: monospace; font-size: 0.9rem; resize: vertical; }
+        textarea { min-height: 72px; }
+        textarea:focus, input:focus { outline: none; border-color: #555; }
+        .btn { display: block; width: 100%; padding: 0.75rem; border: none; border-radius: 6px; font-size: 1rem; cursor: pointer; }
+        .btn-primary { background: #1a6b35; color: #fff; }
+        .btn-primary:hover { background: #1f7d3e; }
+        .btn-primary:disabled { background: #333; color: #666; cursor: not-allowed; }
+        .btn-danger { background: transparent; border: 1px solid #5a2020; color: #b44; font-size: 0.85rem; margin-top: 1rem; }
+        .btn-danger:hover { background: #1a0808; }
+
+        /* Result / error */
+        .msg { margin-top: 1rem; padding: 0.8rem 1rem; border-radius: 6px; font-family: monospace; font-size: 0.85rem; word-break: break-all; line-height: 1.5; }
+        .msg-ok { background: #0d2818; border: 1px solid #1a6b35; }
+        .msg-err { background: #2a0f0f; border: 1px solid #8b2020; }
+
+        /* Configured state */
+        .configured { text-align: center; margin-top: 1.5rem; }
+        .configured .label { font-size: 0.82rem; opacity: 0.5; margin-bottom: 0.3rem; }
+        .configured .npub { font-family: monospace; font-size: 0.82rem; word-break: break-all; background: #1a1a1a; padding: 0.65rem; border-radius: 6px; }
+        .configured .mode-label { display: inline-block; font-size: 0.75rem; padding: 0.2rem 0.6rem; border-radius: 4px; background: #1a6b35; margin-bottom: 1rem; }
+        .warn { font-size: 0.78rem; opacity: 0.4; margin-top: 0.75rem; text-align: center; }
+        .hidden { display: none; }
+
+        /* Toggle */
+        .toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 0.6rem 0; }
+        .toggle-row label { opacity: 1; margin: 0; font-size: 0.9rem; }
+        .toggle-row .desc { font-size: 0.78rem; opacity: 0.45; }
+        .switch { position: relative; width: 44px; height: 24px; flex-shrink: 0; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; inset: 0; background: #333; border-radius: 24px; transition: 0.2s; }
+        .slider::before { content: ''; position: absolute; width: 18px; height: 18px; left: 3px; bottom: 3px; background: #888; border-radius: 50%; transition: 0.2s; }
+        .switch input:checked + .slider { background: #1a6b35; }
+        .switch input:checked + .slider::before { transform: translateX(20px); background: #fff; }
+
+        /* Relay config */
+        .relay-section { margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid #222; }
+        .relay-section h2 { font-size: 1.1rem; margin-bottom: 0.75rem; }
+        .relay-list { list-style: none; margin-bottom: 0.75rem; }
+        .relay-list li { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem; }
+        .relay-list input { flex: 1; padding: 0.5rem; background: #111; border: 1px solid #333; border-radius: 4px; color: #e0e0e0; font-family: monospace; font-size: 0.85rem; }
+        .relay-list input:focus { outline: none; border-color: #555; }
+        .relay-rm { background: none; border: none; color: #844; cursor: pointer; font-size: 1.1rem; padding: 0.2rem 0.4rem; opacity: 0.6; }
+        .relay-rm:hover { opacity: 1; }
+        .relay-actions { display: flex; gap: 0.5rem; }
+        .btn-sm { padding: 0.45rem 0.8rem; font-size: 0.82rem; border-radius: 4px; cursor: pointer; border: none; }
+        .btn-add { background: #222; color: #aaa; }
+        .btn-add:hover { background: #2a2a2a; }
+        .btn-save { background: #1a6b35; color: #fff; }
+        .btn-save:hover { background: #1f7d3e; }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>Heartwood</h1>
-        <p>Hardware signing appliance for Nostr</p>
-        <div class="status" id="status">Loading...</div>
+        <p class="subtitle">Nostr signing appliance</p>
+        <div class="status-bar" id="status">Loading...</div>
+
+        <!-- SETUP MODE -->
+        <div id="setup" class="hidden">
+            <div class="mode-cards">
+                <div class="mode-card selected" data-mode="bunker" onclick="selectMode('bunker')">
+                    <h3>Bunker <span class="badge">recommended</span></h3>
+                    <p>Use your existing nsec as-is. Heartwood acts as a NIP-46 remote signer &mdash; your current npub stays the same. Connect from NostrHub, Amethyst, or any NIP-46 client.</p>
+                </div>
+                <div class="mode-card" data-mode="tree-mnemonic" onclick="selectMode('tree-mnemonic')">
+                    <h3>nsec-tree (mnemonic) <span class="badge advanced">advanced</span></h3>
+                    <p>Derive a new master identity from a BIP-39 mnemonic at path m/44'/1237'/727'/0'/0'. Creates a separate nsec-tree root for deriving unlinkable child identities. Different npub from your current one.</p>
+                </div>
+                <div class="mode-card" data-mode="tree-nsec" onclick="selectMode('tree-nsec')">
+                    <h3>nsec-tree (from nsec) <span class="badge advanced">advanced</span></h3>
+                    <p>Derive a new nsec-tree root via HMAC-SHA256 from an existing nsec. Creates a separate master identity for child derivation. Different npub from the input nsec.</p>
+                </div>
+            </div>
+
+            <!-- Bunker fields -->
+            <div id="fields-bunker" class="fields">
+                <div class="field">
+                    <label>Your nsec (nsec1...)</label>
+                    <textarea id="bunker-nsec" placeholder="nsec1..." autocomplete="off" spellcheck="false"></textarea>
+                </div>
+            </div>
+
+            <!-- Tree-mnemonic fields -->
+            <div id="fields-tree-mnemonic" class="fields hidden">
+                <div class="field">
+                    <label>BIP-39 mnemonic (12 or 24 words)</label>
+                    <textarea id="tree-mnemonic" placeholder="abandon ability able about ..." autocomplete="off" spellcheck="false"></textarea>
+                </div>
+                <div class="field">
+                    <label>Passphrase (optional)</label>
+                    <input type="password" id="tree-passphrase" placeholder="Leave blank if none" autocomplete="off">
+                </div>
+            </div>
+
+            <!-- Tree-nsec fields -->
+            <div id="fields-tree-nsec" class="fields hidden">
+                <div class="field">
+                    <label>Source nsec (nsec1...)</label>
+                    <textarea id="tree-nsec" placeholder="nsec1..." autocomplete="off" spellcheck="false"></textarea>
+                </div>
+            </div>
+
+            <button class="btn btn-primary" id="submit" onclick="doSetup()">Initialise</button>
+            <p class="warn">Your secret is stored on this device only. Ensure you are on a trusted local network.</p>
+        </div>
+
+        <!-- CONFIGURED MODE -->
+        <div id="configured" class="configured hidden">
+            <div class="mode-label" id="conf-mode"></div>
+            <p class="label">Master pubkey</p>
+            <div class="npub" id="conf-npub"></div>
+
+            <div id="bunker-uri-section" class="hidden" style="margin-top:1.5rem;">
+                <p class="label">Bunker connection string</p>
+                <div style="position:relative;">
+                    <div class="npub" id="bunker-uri" style="padding-right:3rem;"></div>
+                    <button onclick="copyBunkerUri()" style="position:absolute; right:0.4rem; top:50%; transform:translateY(-50%); background:#2a2a2a; border:1px solid #444; border-radius:4px; color:#ccc; padding:0.3rem 0.5rem; cursor:pointer; font-size:0.75rem;" id="copy-btn">Copy</button>
+                </div>
+                <p class="warn">Paste this into NostrHub, Amethyst, or any NIP-46 client to connect.</p>
+            </div>
+
+            <button class="btn btn-danger" onclick="doReset()">Reset device</button>
+            <p class="warn">Reset wipes the stored secret and returns to setup. Your key is not deleted from existence &mdash; only from this device.</p>
+        </div>
+
+        <div id="msg" class="hidden"></div>
+
+        <!-- RELAY CONFIG (always visible once loaded) -->
+        <div id="relay-section" class="relay-section hidden">
+            <h2>Relays</h2>
+            <p style="font-size:0.8rem; opacity:0.45; margin-bottom:0.75rem;">NIP-46 bunker traffic flows through these relays. Clients connect to your bunker via these same relays.</p>
+            <ul class="relay-list" id="relay-list"></ul>
+            <div class="relay-actions">
+                <button class="btn-sm btn-add" onclick="addRelay()">+ Add relay</button>
+                <button class="btn-sm btn-save" onclick="saveRelays()">Save</button>
+            </div>
+            <div id="relay-msg" class="hidden" style="margin-top:0.5rem;"></div>
+        </div>
+
+        <!-- TOR CONFIG -->
+        <div id="tor-section" class="relay-section hidden">
+            <h2>Tor</h2>
+            <div class="toggle-row">
+                <div>
+                    <label>Enable Tor hidden service</label>
+                    <p class="desc">Expose the web UI as a .onion address. Off by default.</p>
+                </div>
+                <label class="switch">
+                    <input type="checkbox" id="tor-toggle" onchange="toggleTor()">
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <div id="tor-msg" class="hidden" style="margin-top:0.5rem;"></div>
+        </div>
+
+        <!-- PASSWORD CONFIG -->
+        <div id="password-section" class="relay-section hidden">
+            <h2>Device Password</h2>
+            <p style="font-size:0.8rem; opacity:0.45; margin-bottom:0.75rem;" id="pw-hint">Set a password to protect this web UI. Required for access over any network.</p>
+            <div style="display:flex; gap:0.5rem;">
+                <input type="password" id="pw-input" placeholder="Enter new password" style="flex:1; padding:0.5rem; background:#111; border:1px solid #333; border-radius:4px; color:#e0e0e0; font-size:0.9rem;">
+                <button class="btn-sm btn-save" onclick="setPassword()">Set</button>
+            </div>
+            <div id="pw-msg" class="hidden" style="margin-top:0.5rem;"></div>
+        </div>
     </div>
+
     <script>
+        let currentMode = 'bunker';
+
+        function selectMode(mode) {
+            currentMode = mode;
+            document.querySelectorAll('.mode-card').forEach(c =>
+                c.classList.toggle('selected', c.dataset.mode === mode));
+            ['bunker', 'tree-mnemonic', 'tree-nsec'].forEach(m =>
+                document.getElementById('fields-' + m).classList.toggle('hidden', m !== mode));
+        }
+
+        function showMsg(text, ok) {
+            const el = document.getElementById('msg');
+            el.textContent = text;
+            el.className = ok ? 'msg msg-ok' : 'msg msg-err';
+        }
+
+        async function doSetup() {
+            const btn = document.getElementById('submit');
+            btn.disabled = true;
+            btn.textContent = 'Initialising...';
+            document.getElementById('msg').className = 'hidden';
+
+            let body = { mode: currentMode };
+            if (currentMode === 'bunker') {
+                const nsec = document.getElementById('bunker-nsec').value.trim();
+                if (!nsec) { btn.disabled = false; btn.textContent = 'Initialise'; return; }
+                body.nsec = nsec;
+            } else if (currentMode === 'tree-mnemonic') {
+                const mnemonic = document.getElementById('tree-mnemonic').value.trim();
+                if (!mnemonic) { btn.disabled = false; btn.textContent = 'Initialise'; return; }
+                body.mnemonic = mnemonic;
+                const pass = document.getElementById('tree-passphrase').value;
+                if (pass) body.passphrase = pass;
+            } else {
+                const nsec = document.getElementById('tree-nsec').value.trim();
+                if (!nsec) { btn.disabled = false; btn.textContent = 'Initialise'; return; }
+                body.nsec = nsec;
+            }
+
+            try {
+                const res = await fetch('/api/setup', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    document.getElementById('setup').classList.add('hidden');
+                    showConfigured(data.mode, data.npub);
+                    showMsg('Setup complete!', true);
+                } else {
+                    showMsg('Error: ' + data.error, false);
+                    btn.disabled = false;
+                    btn.textContent = 'Initialise';
+                }
+            } catch (e) {
+                showMsg('Connection failed: ' + e.message, false);
+                btn.disabled = false;
+                btn.textContent = 'Initialise';
+            }
+        }
+
+        async function doReset() {
+            if (!confirm('This will wipe the stored secret from the device. Are you sure?')) return;
+            try {
+                const res = await fetch('/api/reset', { method: 'POST' });
+                const data = await res.json();
+                if (res.ok) {
+                    document.getElementById('configured').classList.add('hidden');
+                    document.getElementById('setup').classList.remove('hidden');
+                    document.getElementById('msg').className = 'hidden';
+                } else {
+                    showMsg('Reset failed: ' + data.error, false);
+                }
+            } catch (e) {
+                showMsg('Connection failed: ' + e.message, false);
+            }
+        }
+
+        function showConfigured(mode, npub) {
+            const labels = {
+                'bunker': 'Bunker mode (NIP-46)',
+                'tree-mnemonic': 'nsec-tree (mnemonic)',
+                'tree-nsec': 'nsec-tree (nsec)',
+            };
+            document.getElementById('conf-mode').textContent = labels[mode] || mode;
+            document.getElementById('conf-npub').textContent = npub;
+            document.getElementById('configured').classList.remove('hidden');
+        }
+
+        // --- Relay management ---
+
+        function renderRelays(relays) {
+            const ul = document.getElementById('relay-list');
+            ul.innerHTML = '';
+            relays.forEach((r, i) => {
+                const li = document.createElement('li');
+                li.innerHTML = `<input type="text" value="${r}" data-idx="${i}" spellcheck="false"><button class="relay-rm" onclick="removeRelay(${i})">&times;</button>`;
+                ul.appendChild(li);
+            });
+            document.getElementById('relay-section').classList.remove('hidden');
+        }
+
+        function getRelayInputs() {
+            return Array.from(document.querySelectorAll('#relay-list input'))
+                .map(el => el.value.trim())
+                .filter(v => v.length > 0);
+        }
+
+        function addRelay() {
+            const ul = document.getElementById('relay-list');
+            const i = ul.children.length;
+            const li = document.createElement('li');
+            li.innerHTML = `<input type="text" value="wss://" data-idx="${i}" spellcheck="false"><button class="relay-rm" onclick="removeRelay(${i})">&times;</button>`;
+            ul.appendChild(li);
+            li.querySelector('input').focus();
+        }
+
+        function removeRelay(idx) {
+            const relays = getRelayInputs();
+            relays.splice(idx, 1);
+            renderRelays(relays);
+        }
+
+        async function saveRelays() {
+            const relays = getRelayInputs();
+            const msgEl = document.getElementById('relay-msg');
+            try {
+                const res = await fetch('/api/relays', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ relays }),
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    renderRelays(data.relays);
+                    msgEl.textContent = 'Saved';
+                    msgEl.className = 'msg msg-ok';
+                    setTimeout(() => msgEl.className = 'hidden', 2000);
+                } else {
+                    msgEl.textContent = data.error;
+                    msgEl.className = 'msg msg-err';
+                }
+            } catch (e) {
+                msgEl.textContent = 'Connection failed';
+                msgEl.className = 'msg msg-err';
+            }
+        }
+
+        // --- Bunker URI ---
+
+        function copyBunkerUri() {
+            const uri = document.getElementById('bunker-uri').textContent;
+            navigator.clipboard.writeText(uri).then(() => {
+                const btn = document.getElementById('copy-btn');
+                btn.textContent = 'Copied!';
+                btn.style.borderColor = '#1a6b35';
+                setTimeout(() => { btn.textContent = 'Copy'; btn.style.borderColor = '#444'; }, 2000);
+            });
+        }
+
+        // --- Tor ---
+
+        async function toggleTor() {
+            const enabled = document.getElementById('tor-toggle').checked;
+            const msgEl = document.getElementById('tor-msg');
+            try {
+                const res = await fetch('/api/tor', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled }),
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    msgEl.textContent = enabled ? 'Tor enabled. Restart the device to apply.' : 'Tor disabled.';
+                    msgEl.className = 'msg msg-ok';
+                    setTimeout(() => msgEl.className = 'hidden', 3000);
+                } else {
+                    msgEl.textContent = data.error;
+                    msgEl.className = 'msg msg-err';
+                }
+            } catch (e) {
+                msgEl.textContent = 'Connection failed';
+                msgEl.className = 'msg msg-err';
+            }
+        }
+
+        // --- Password ---
+
+        async function setPassword() {
+            const pw = document.getElementById('pw-input').value;
+            if (!pw) return;
+            const msgEl = document.getElementById('pw-msg');
+            try {
+                const res = await fetch('/api/password', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password: pw }),
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    msgEl.textContent = 'Password set. You will be prompted on next visit.';
+                    msgEl.className = 'msg msg-ok';
+                    document.getElementById('pw-input').value = '';
+                    document.getElementById('pw-hint').textContent = 'Password is set. Enter a new one to change it.';
+                } else {
+                    msgEl.textContent = data.error;
+                    msgEl.className = 'msg msg-err';
+                }
+            } catch (e) {
+                msgEl.textContent = 'Connection failed';
+                msgEl.className = 'msg msg-err';
+            }
+        }
+
+        // --- Load initial state ---
+
         fetch('/api/status')
             .then(r => r.json())
             .then(d => {
                 document.getElementById('status').textContent =
-                    'Status: ' + d.status + ' | Version: ' + d.version;
+                    'Status: ' + d.status + ' | v' + d.version;
+                if (d.setup_required) {
+                    document.getElementById('setup').classList.remove('hidden');
+                } else {
+                    showConfigured(d.mode || 'unknown', d.npub || '(stored)');
+                    if (d.bunker_uri) {
+                        document.getElementById('bunker-uri').textContent = d.bunker_uri;
+                        document.getElementById('bunker-uri-section').classList.remove('hidden');
+                    }
+                }
+                if (d.relays) renderRelays(d.relays);
+                // Show config sections
+                document.getElementById('tor-section').classList.remove('hidden');
+                document.getElementById('tor-toggle').checked = !!d.tor_enabled;
+                document.getElementById('password-section').classList.remove('hidden');
+                if (d.has_password) {
+                    document.getElementById('pw-hint').textContent = 'Password is set. Enter a new one to change it.';
+                }
             })
             .catch(() => {
                 document.getElementById('status').textContent = 'Connection failed';

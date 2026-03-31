@@ -56,6 +56,15 @@ impl Storage {
         fs::read(self.secret_path())
     }
 
+    /// Delete the stored master secret, returning to setup mode.
+    pub fn delete_master_secret(&self) -> io::Result<()> {
+        let path = self.secret_path();
+        if path.exists() {
+            fs::remove_file(path)?;
+        }
+        Ok(())
+    }
+
     /// Persist a JSON config string to disk with restrictive permissions.
     pub fn save_config(&self, config: &str) -> io::Result<()> {
         self.ensure_dir()?;
