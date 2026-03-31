@@ -1,7 +1,7 @@
 [Unit]
 Description=Heartwood signing appliance
-After=network-online.target
-Wants=network-online.target
+After=network-online.target tor.service
+Wants=network-online.target tor.service
 StartLimitBurst=5
 StartLimitIntervalSec=60
 
