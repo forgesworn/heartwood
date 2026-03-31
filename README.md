@@ -1,5 +1,7 @@
 # Heartwood
 
+[![CI](https://github.com/forgesworn/heartwood/actions/workflows/ci.yml/badge.svg)](https://github.com/forgesworn/heartwood/actions/workflows/ci.yml)
+
 Open-source Nostr signing software built on [nsec-tree](https://github.com/forgesworn/nsec-tree). Runs on a Raspberry Pi. Holds your master identity in hardware, derives unlimited unlinkable personas, signs events via NIP-46, reachable from anywhere via Tor. Private keys never leave the device.
 
 ## What it does
@@ -9,6 +11,17 @@ Open-source Nostr signing software built on [nsec-tree](https://github.com/forge
 - **Tor by default.** No clearnet exposure. No router configuration.
 - **Per-client permissions.** Control which event kinds each paired app can sign.
 - **Unlinkable personas.** Derive separate identities for work, personal, anon. Nobody can link them unless you prove it.
+
+## How it compares
+
+| | Heartwood | nsecBunker | Amber | nsec.app | LNbits NSD |
+|---|:-:|:-:|:-:|:-:|:-:|
+| Multi-identity from one seed | Yes | No | No | No | No |
+| Tor by default | Yes | No | No | No | No |
+| Per-client permissions | Yes | Yes | No | No | No |
+| Works from any device/OS | Yes | Yes | Android only | Browser only | Desktop only |
+| No server infrastructure | Yes | No (VPS) | Yes | Yes | Yes |
+| Hardware-isolated keys | Yes | No | No | No | Yes |
 
 ## Hardware
 
