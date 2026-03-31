@@ -86,12 +86,8 @@ fn set_dir_permissions(_path: &Path) -> io::Result<()> {
 fn write_secret_file(path: &Path, data: &[u8]) -> io::Result<()> {
     use std::os::unix::fs::OpenOptionsExt;
 
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(path)?;
+    let mut file =
+        fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(path)?;
     io::Write::write_all(&mut file, data)?;
     Ok(())
 }

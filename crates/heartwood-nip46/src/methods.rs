@@ -65,11 +65,17 @@ impl fmt::Debug for Nip46Request {
             Self::Nip04Encrypt(p) => write!(f, "Nip04Encrypt([{} params])", p.len()),
             Self::Nip04Decrypt(p) => write!(f, "Nip04Decrypt([{} params])", p.len()),
             Self::HeartwoodDerive(p) => write!(f, "HeartwoodDerive([{} params])", p.len()),
-            Self::HeartwoodDerivePersona(p) => write!(f, "HeartwoodDerivePersona([{} params])", p.len()),
+            Self::HeartwoodDerivePersona(p) => {
+                write!(f, "HeartwoodDerivePersona([{} params])", p.len())
+            }
             Self::HeartwoodListIdentities => write!(f, "HeartwoodListIdentities"),
             Self::HeartwoodSwitch(p) => write!(f, "HeartwoodSwitch([{} params])", p.len()),
-            Self::HeartwoodCreateProof(p) => write!(f, "HeartwoodCreateProof([{} params])", p.len()),
-            Self::HeartwoodVerifyProof(p) => write!(f, "HeartwoodVerifyProof([{} params])", p.len()),
+            Self::HeartwoodCreateProof(p) => {
+                write!(f, "HeartwoodCreateProof([{} params])", p.len())
+            }
+            Self::HeartwoodVerifyProof(p) => {
+                write!(f, "HeartwoodVerifyProof([{} params])", p.len())
+            }
             Self::HeartwoodRecover(p) => write!(f, "HeartwoodRecover([{} params])", p.len()),
         }
     }
@@ -122,7 +128,11 @@ impl Nip46Response {
     pub fn ok(id: impl Into<String>, result: serde_json::Value) -> Self {
         let id = id.into();
         if contains_nsec(&result) {
-            return Self { id, result: None, error: Some("response contained secret key material".into()) };
+            return Self {
+                id,
+                result: None,
+                error: Some("response contained secret key material".into()),
+            };
         }
         Self { id, result: Some(result), error: None }
     }

@@ -109,11 +109,7 @@ impl SessionManager {
 
     /// Return a list of all active (non-expired) client public keys.
     pub fn list(&self) -> Vec<&str> {
-        self.sessions
-            .iter()
-            .filter(|(_, s)| !s.is_expired())
-            .map(|(k, _)| k.as_str())
-            .collect()
+        self.sessions.iter().filter(|(_, s)| !s.is_expired()).map(|(k, _)| k.as_str()).collect()
     }
 
     /// Return the number of active sessions.

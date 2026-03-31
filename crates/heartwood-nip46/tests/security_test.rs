@@ -26,9 +26,12 @@ fn request_debug_no_params_variant() {
 
 #[test]
 fn response_blocks_nsec_in_result() {
-    let resp = Nip46Response::ok("1", serde_json::json!({
-        "nsec": "nsec1abc123"
-    }));
+    let resp = Nip46Response::ok(
+        "1",
+        serde_json::json!({
+            "nsec": "nsec1abc123"
+        }),
+    );
     assert!(resp.result().is_none());
     assert!(resp.error().is_some());
     assert!(resp.error().unwrap().contains("secret key material"));
@@ -42,9 +45,12 @@ fn response_blocks_nsec_in_nested_array() {
 
 #[test]
 fn response_allows_clean_result() {
-    let resp = Nip46Response::ok("1", serde_json::json!({
-        "pubkey": "d6b3a6496c529d8e7f6e10cc7bb89f794ef931770c700f68a859cd24234a2645"
-    }));
+    let resp = Nip46Response::ok(
+        "1",
+        serde_json::json!({
+            "pubkey": "d6b3a6496c529d8e7f6e10cc7bb89f794ef931770c700f68a859cd24234a2645"
+        }),
+    );
     assert!(resp.result().is_some());
     assert!(resp.error().is_none());
 }

@@ -41,7 +41,10 @@ async fn api_audit(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let entries: Vec<_> = log.entries().iter().collect();
     match serde_json::to_value(&entries) {
         Ok(val) => (StatusCode::OK, axum::Json(val)),
-        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, axum::Json(json!({"error": "serialisation failed"}))),
+        Err(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            axum::Json(json!({"error": "serialisation failed"})),
+        ),
     }
 }
 
