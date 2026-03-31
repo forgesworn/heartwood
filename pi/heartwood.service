@@ -1,0 +1,23 @@
+[Unit]
+Description=Heartwood signing appliance
+After=network-online.target tor.service
+Wants=network-online.target tor.service
+
+[Service]
+Type=simple
+User=heartwood
+Group=heartwood
+ExecStart=/usr/local/bin/heartwood
+Restart=always
+RestartSec=5
+Environment=RUST_LOG=info
+
+# Security hardening
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/heartwood
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
