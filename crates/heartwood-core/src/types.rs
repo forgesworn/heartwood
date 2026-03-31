@@ -1,5 +1,5 @@
 // crates/heartwood-core/src/types.rs
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use zeroize::Zeroize;
 use thiserror::Error;
 
 /// Maximum derivation index (u32::MAX).
