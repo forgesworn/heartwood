@@ -10,6 +10,7 @@ description = "Heartwood device binary for Raspberry Pi"
 heartwood-core = { path = "../heartwood-core" }
 heartwood-nip46 = { path = "../heartwood-nip46" }
 axum = "0.8"
+tower-http = { version = "0.6", features = ["cors"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

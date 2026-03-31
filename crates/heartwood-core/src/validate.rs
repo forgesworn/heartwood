@@ -16,6 +16,11 @@ pub fn validate_purpose(purpose: &str) -> Result<(), HeartwoodError> {
     if purpose.contains('\0') {
         return Err(HeartwoodError::InvalidPurpose("purpose must not contain null bytes".into()));
     }
+    if purpose.contains('|') {
+        return Err(HeartwoodError::InvalidPurpose(
+            "purpose must not contain '|' (attestation delimiter)".into(),
+        ));
+    }
     if purpose.trim().is_empty() {
         return Err(HeartwoodError::InvalidPurpose("purpose must not be whitespace-only".into()));
     }

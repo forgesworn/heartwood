@@ -11,7 +11,7 @@ mod web;
 
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::info;
+use tracing::{error, info};
 
 #[tokio::main]
 async fn main() {
@@ -35,7 +35,10 @@ async fn main() {
 
     oled.show_text("Connecting to Tor...");
     if let Some(onion) = tor.wait_for_onion(120).await {
-        info!("Tor hidden service: {}", onion);
+        // Log only a truncated form to avoid leaking the full .onion address.
+        // .onion addresses are ASCII, but use get() to be panic-free.
+        let truncated = onion.get(..8).unwrap_or(&onion);
+        info!("Tor hidden service ready: {}...", truncated);
         oled.show_qr(&onion);
     } else {
         info!("Tor not available, running on local network only");
@@ -45,9 +48,18 @@ async fn main() {
     let state = Arc::new(web::AppState { audit_log: Mutex::new(audit_log) });
     let app = web::create_router(state);
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:8080").await.unwrap();
+    let listener = match tokio::net::TcpListener::bind("127.0.0.1:8080").await {
+        Ok(l) => l,
+        Err(e) => {
+            error!("Failed to bind 127.0.0.1:8080: {e}");
+            std::process::exit(1);
+        }
+    };
     info!("Web UI listening on 127.0.0.1:8080");
     oled.show_text("READY");
 
-    axum::serve(listener, app).await.unwrap();
+    if let Err(e) = axum::serve(listener, app).await {
+        error!("Server error: {e}");
+        std::process::exit(1);
+    }
 }

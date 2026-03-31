@@ -49,8 +49,8 @@ pub struct TreeRoot {
 }
 
 impl TreeRoot {
-    pub(crate) fn new(secret: [u8; 32], master_pubkey: String) -> Self {
-        Self { secret: zeroize::Zeroizing::new(secret), master_pubkey }
+    pub(crate) fn new(secret: zeroize::Zeroizing<[u8; 32]>, master_pubkey: String) -> Self {
+        Self { secret, master_pubkey }
     }
 
     pub(crate) fn secret(&self) -> &[u8; 32] {

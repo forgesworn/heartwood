@@ -28,6 +28,16 @@ impl HeartwoodServer {
     pub fn with_root(root: TreeRoot) -> Self {
         Self { root: Some(root), sessions: Mutex::new(SessionManager::new()) }
     }
+
+    /// Access sessions, recovering from mutex poisoning.
+    ///
+    /// A poisoned mutex means a thread panicked while holding the lock.
+    /// For a signing appliance we recover rather than propagate the panic,
+    /// since the session data itself is not corrupted by an unrelated panic.
+    #[allow(dead_code)]
+    fn lock_sessions(&self) -> std::sync::MutexGuard<'_, SessionManager> {
+        self.sessions.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 }
 
 impl Default for HeartwoodServer {

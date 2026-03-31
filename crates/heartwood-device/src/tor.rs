@@ -46,7 +46,9 @@ impl TorManager {
 
         loop {
             if let Some(addr) = self.onion_address() {
-                info!("Tor onion address ready: {}", addr);
+                // .onion addresses are ASCII, but use get() to be panic-free.
+                let truncated = addr.get(..8).unwrap_or(&addr);
+                info!("Tor onion address ready: {}...", truncated);
                 return Some(addr);
             }
 

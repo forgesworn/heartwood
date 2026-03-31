@@ -35,7 +35,9 @@ impl Storage {
     }
 
     fn ensure_dir(&self) -> io::Result<()> {
-        fs::create_dir_all(&self.base_dir)
+        fs::create_dir_all(&self.base_dir)?;
+        set_dir_permissions(&self.base_dir)?;
+        Ok(())
     }
 
     /// Return `true` if an encrypted master secret has been stored.
@@ -54,16 +56,29 @@ impl Storage {
         fs::read(self.secret_path())
     }
 
-    /// Persist a JSON config string to disk.
+    /// Persist a JSON config string to disk with restrictive permissions.
     pub fn save_config(&self, config: &str) -> io::Result<()> {
         self.ensure_dir()?;
-        fs::write(self.config_path(), config)
+        write_secret_file(&self.config_path(), config.as_bytes())
     }
 
     /// Load the stored JSON config string.
     pub fn load_config(&self) -> io::Result<String> {
         fs::read_to_string(self.config_path())
     }
+}
+
+/// Set directory permissions to 0700 (owner only).
+#[cfg(unix)]
+fn set_dir_permissions(path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+}
+
+/// Set directory permissions (non-Unix fallback -- no-op).
+#[cfg(not(unix))]
+fn set_dir_permissions(_path: &Path) -> io::Result<()> {
+    Ok(())
 }
 
 /// Write secret material to a file with mode 0600 (owner read/write only).

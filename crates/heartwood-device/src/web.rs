@@ -12,6 +12,7 @@ use axum::{
 };
 use serde_json::json;
 use tokio::sync::Mutex;
+use tower_http::cors::{self, CorsLayer};
 
 use crate::audit::AuditLog;
 
@@ -30,7 +31,7 @@ async fn serve_index() -> impl IntoResponse {
 async fn api_status() -> impl IntoResponse {
     axum::Json(json!({
         "status": "running",
-        "version": "0.1.0"
+        "version": env!("CARGO_PKG_VERSION")
     }))
 }
 
@@ -38,14 +39,28 @@ async fn api_status() -> impl IntoResponse {
 async fn api_audit(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let log = state.audit_log.lock().await;
     let entries: Vec<_> = log.entries().iter().collect();
-    axum::Json(serde_json::to_value(&entries).unwrap_or(json!([])))
+    match serde_json::to_value(&entries) {
+        Ok(val) => (StatusCode::OK, axum::Json(val)),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, axum::Json(json!({"error": "serialisation failed"}))),
+    }
 }
 
 /// Build and return the application router.
+///
+/// CORS is restrictive: same-origin only. The UI is served from the same
+/// origin via `include_str!`, so cross-origin requests are never needed.
 pub fn create_router(state: Arc<AppState>) -> Router {
+    let cors = CorsLayer::new()
+        .allow_origin(cors::AllowOrigin::exact(
+            "http://127.0.0.1:8080".parse().expect("valid origin"),
+        ))
+        .allow_methods([axum::http::Method::GET])
+        .allow_headers([header::CONTENT_TYPE]);
+
     Router::new()
         .route("/", get(serve_index))
         .route("/api/status", get(api_status))
         .route("/api/audit", get(api_audit))
+        .layer(cors)
         .with_state(state)
 }
