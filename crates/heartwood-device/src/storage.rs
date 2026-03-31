@@ -57,9 +57,20 @@ impl Storage {
     }
 
     /// Delete the stored master secret, returning to setup mode.
+    ///
+    /// Overwrites the file contents with zeros before unlinking.
+    /// Best-effort on flash storage — the overwrite may not reach the same
+    /// physical cells, but it raises the bar meaningfully.
     pub fn delete_master_secret(&self) -> io::Result<()> {
         let path = self.secret_path();
         if path.exists() {
+            // Overwrite with zeros before removing
+            let len = fs::metadata(&path)?.len() as usize;
+            let zeros = vec![0u8; len];
+            let mut file = fs::OpenOptions::new().write(true).open(&path)?;
+            io::Write::write_all(&mut file, &zeros)?;
+            file.sync_all()?;
+            drop(file);
             fs::remove_file(path)?;
         }
         Ok(())
