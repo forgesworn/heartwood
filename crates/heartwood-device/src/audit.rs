@@ -3,7 +3,6 @@
 
 // Scaffold: `log` and `recent` will be called from the NIP-46 server and the
 // web API once those layers are wired up in Phase 2.
-#![allow(dead_code)]
 
 use std::collections::VecDeque;
 

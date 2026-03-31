@@ -3,7 +3,6 @@
 
 // Scaffold: `show_mnemonic_word` and `clear` are part of the device UX flow
 // and will be called from the setup wizard in Phase 2.
-#![allow(dead_code)]
 
 use qrcode::render::unicode;
 use qrcode::{EcLevel, QrCode};
