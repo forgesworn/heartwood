@@ -37,9 +37,7 @@ pub struct SessionManager {
 impl SessionManager {
     /// Create an empty session manager.
     pub fn new() -> Self {
-        Self {
-            sessions: HashMap::new(),
-        }
+        Self { sessions: HashMap::new() }
     }
 
     /// Register a new session, replacing any existing one for the same pubkey.

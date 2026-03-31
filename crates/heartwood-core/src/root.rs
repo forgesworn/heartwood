@@ -49,9 +49,7 @@ pub fn from_nsec(nsec: &str) -> Result<TreeRoot, HeartwoodError> {
 pub fn from_mnemonic(mnemonic: &str, passphrase: Option<&str>) -> Result<TreeRoot, HeartwoodError> {
     use bip39::Mnemonic;
 
-    let parsed: Mnemonic = mnemonic
-        .parse()
-        .map_err(|_| HeartwoodError::InvalidMnemonic)?;
+    let parsed: Mnemonic = mnemonic.parse().map_err(|_| HeartwoodError::InvalidMnemonic)?;
 
     let seed = parsed.to_seed(passphrase.unwrap_or(""));
 

@@ -28,8 +28,7 @@ fn different_names_produce_different_keys() {
 fn derive_from_persona_creates_distinct_sub_identity() {
     let root = root_01();
     let persona = derive_persona(&root, "personal", None).expect("persona must succeed");
-    let sub = derive_from_persona(&persona, "relay-auth", None)
-        .expect("sub-identity must succeed");
+    let sub = derive_from_persona(&persona, "relay-auth", None).expect("sub-identity must succeed");
     assert_ne!(persona.identity.npub, sub.npub);
     assert_ne!(persona.identity.nsec, sub.nsec);
 }

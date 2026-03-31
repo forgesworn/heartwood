@@ -18,7 +18,7 @@ pub fn recover(
 ) -> Result<HashMap<String, Vec<Identity>>, HeartwoodError> {
     let range = scan_range.unwrap_or(DEFAULT_SCAN_RANGE);
 
-    if range < 1 || range > MAX_SCAN_RANGE {
+    if !(1..=MAX_SCAN_RANGE).contains(&range) {
         return Err(HeartwoodError::InvalidScanRange);
     }
 

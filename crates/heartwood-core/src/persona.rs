@@ -15,11 +15,7 @@ pub fn derive_persona(
     let idx = index.unwrap_or(0);
     let identity = derive(root, &purpose, idx)?;
 
-    Ok(Persona {
-        identity,
-        name: name.to_string(),
-        index: idx,
-    })
+    Ok(Persona { identity, name: name.to_string(), index: idx })
 }
 
 /// Derive a sub-identity from an existing persona.

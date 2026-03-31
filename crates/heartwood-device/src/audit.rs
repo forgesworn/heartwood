@@ -1,6 +1,10 @@
 // crates/heartwood-device/src/audit.rs
 //! Signing audit log with a bounded ring-buffer.
 
+// Scaffold: `log` and `recent` will be called from the NIP-46 server and the
+// web API once those layers are wired up in Phase 2.
+#![allow(dead_code)]
+
 use std::collections::VecDeque;
 
 use serde::Serialize;
@@ -34,9 +38,7 @@ pub struct AuditLog {
 impl AuditLog {
     /// Create an empty audit log.
     pub fn new() -> Self {
-        Self {
-            entries: VecDeque::with_capacity(MAX_ENTRIES),
-        }
+        Self { entries: VecDeque::with_capacity(MAX_ENTRIES) }
     }
 
     /// Append an entry to the log, evicting the oldest if at capacity.
@@ -54,10 +56,7 @@ impl AuditLog {
 
     /// Return the `count` most-recent entries, oldest-first.
     pub fn recent(&self, count: usize) -> Vec<&AuditEntry> {
-        self.entries.iter().rev().take(count).collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect()
+        self.entries.iter().rev().take(count).collect::<Vec<_>>().into_iter().rev().collect()
     }
 }
 

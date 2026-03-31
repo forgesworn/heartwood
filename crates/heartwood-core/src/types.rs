@@ -1,6 +1,6 @@
 // crates/heartwood-core/src/types.rs
-use zeroize::Zeroize;
 use thiserror::Error;
+use zeroize::Zeroize;
 
 /// Maximum derivation index (u32::MAX).
 pub const MAX_INDEX: u32 = 0xFFFF_FFFF;
@@ -48,10 +48,7 @@ pub struct TreeRoot {
 
 impl TreeRoot {
     pub(crate) fn new(secret: [u8; 32], master_pubkey: String) -> Self {
-        Self {
-            secret: zeroize::Zeroizing::new(secret),
-            master_pubkey,
-        }
+        Self { secret: zeroize::Zeroizing::new(secret), master_pubkey }
     }
 
     pub(crate) fn secret(&self) -> &[u8; 32] {

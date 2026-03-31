@@ -28,11 +28,7 @@ fn finds_derived_identities_at_expected_indices() {
 #[test]
 fn returns_entries_for_all_requested_purposes() {
     let root = root_01();
-    let purposes = vec![
-        "social".to_string(),
-        "commerce".to_string(),
-        "auth".to_string(),
-    ];
+    let purposes = vec!["social".to_string(), "commerce".to_string(), "auth".to_string()];
     let recovered = recover(&root, &purposes, Some(3)).expect("recover must succeed");
 
     assert_eq!(recovered.len(), 3);

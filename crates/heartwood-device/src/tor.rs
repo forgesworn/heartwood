@@ -1,6 +1,10 @@
 // crates/heartwood-device/src/tor.rs
 //! Tor daemon management and hidden-service address discovery.
 
+// Scaffold: `with_dir` and `is_running` will be called from the main daemon
+// and health-check endpoints in Phase 2.
+#![allow(dead_code)]
+
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -17,9 +21,7 @@ impl TorManager {
     /// Create a manager using the default onion directory
     /// (`/var/lib/tor/heartwood`).
     pub fn new() -> Self {
-        Self {
-            onion_dir: PathBuf::from("/var/lib/tor/heartwood"),
-        }
+        Self { onion_dir: PathBuf::from("/var/lib/tor/heartwood") }
     }
 
     /// Create a manager with a custom onion directory path.

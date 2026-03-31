@@ -28,7 +28,6 @@ pub enum Nip46Request {
     // ------------------------------------------------------------------
     // Heartwood extensions
     // ------------------------------------------------------------------
-
     /// Derive a child identity at the given path (params: [purpose, index]).
     HeartwoodDerive(Vec<serde_json::Value>),
 
@@ -69,19 +68,11 @@ pub struct Nip46Response {
 impl Nip46Response {
     /// Construct a successful response.
     pub fn ok(id: impl Into<String>, result: serde_json::Value) -> Self {
-        Self {
-            id: id.into(),
-            result: Some(result),
-            error: None,
-        }
+        Self { id: id.into(), result: Some(result), error: None }
     }
 
     /// Construct an error response.
     pub fn err(id: impl Into<String>, message: impl Into<String>) -> Self {
-        Self {
-            id: id.into(),
-            result: None,
-            error: Some(message.into()),
-        }
+        Self { id: id.into(), result: None, error: Some(message.into()) }
     }
 }
