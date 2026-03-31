@@ -21,7 +21,7 @@ fn finds_derived_identities_at_expected_indices() {
     let social_ids = recovered.get("social").expect("social must exist");
     assert_eq!(social_ids.len(), 5);
     assert_eq!(social_ids[3].npub, expected.npub);
-    assert_eq!(social_ids[3].nsec, expected.nsec);
+    assert_eq!(social_ids[3].nsec(), expected.nsec());
     assert_eq!(social_ids[3].index, 3);
 }
 

@@ -7,7 +7,7 @@
 
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Filesystem-backed storage for secrets and configuration.
 ///
@@ -43,10 +43,10 @@ impl Storage {
         self.secret_path().exists()
     }
 
-    /// Persist encrypted master secret bytes to disk.
+    /// Persist encrypted master secret bytes to disk with restrictive permissions.
     pub fn save_master_secret(&self, encrypted: &[u8]) -> io::Result<()> {
         self.ensure_dir()?;
-        fs::write(self.secret_path(), encrypted)
+        write_secret_file(&self.secret_path(), encrypted)
     }
 
     /// Load and return the stored encrypted master secret bytes.
@@ -64,4 +64,25 @@ impl Storage {
     pub fn load_config(&self) -> io::Result<String> {
         fs::read_to_string(self.config_path())
     }
+}
+
+/// Write secret material to a file with mode 0600 (owner read/write only).
+#[cfg(unix)]
+fn write_secret_file(path: &Path, data: &[u8]) -> io::Result<()> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    io::Write::write_all(&mut file, data)?;
+    Ok(())
+}
+
+/// Write secret material to a file (non-Unix fallback).
+#[cfg(not(unix))]
+fn write_secret_file(path: &Path, data: &[u8]) -> io::Result<()> {
+    fs::write(path, data)
 }

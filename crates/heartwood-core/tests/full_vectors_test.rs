@@ -26,7 +26,7 @@ fn vector_1_social_index_0() {
     );
 
     let child = derive(&root, "social", 0).expect("derive must succeed");
-    assert_eq!(child.nsec, "nsec1nr5ck3mw4v7zhj6syrj2v7dyrd6wa0anpgregnzrv8ysv5qjvhnsafv7mx");
+    assert_eq!(child.nsec(), "nsec1nr5ck3mw4v7zhj6syrj2v7dyrd6wa0anpgregnzrv8ysv5qjvhnsafv7mx");
     assert_eq!(child.npub, "npub1ehzv62sphgdc4lfjnxmxcwx3xpp6rxktdp7rxnc9yl8l4arykdeqyfhrxy");
     assert_eq!(child.index, 0);
     assert_eq!(child.purpose, "social");
@@ -39,7 +39,7 @@ fn vector_1_social_index_0() {
 fn vector_2_commerce_index_0() {
     let root = root_01();
     let child = derive(&root, "commerce", 0).expect("derive must succeed");
-    assert_eq!(child.nsec, "nsec1l3329mrljxtscjzln469xf5drf4qwfe7aq5u73xgw6zl0p6c7p8sd6vumk");
+    assert_eq!(child.nsec(), "nsec1l3329mrljxtscjzln469xf5drf4qwfe7aq5u73xgw6zl0p6c7p8sd6vumk");
     assert_eq!(child.index, 0);
     assert_eq!(child.purpose, "commerce");
 }
@@ -51,7 +51,7 @@ fn vector_2_commerce_index_0() {
 fn vector_3_social_index_1() {
     let root = root_01();
     let child = derive(&root, "social", 1).expect("derive must succeed");
-    assert_eq!(child.nsec, "nsec1sq4zl5cay4ghh54mndcedsmhumxz7vnj3wgkctp75uw2wqmk0yts3ny5vz");
+    assert_eq!(child.nsec(), "nsec1sq4zl5cay4ghh54mndcedsmhumxz7vnj3wgkctp75uw2wqmk0yts3ny5vz");
     assert_eq!(child.index, 1);
     assert_eq!(child.purpose, "social");
 }
@@ -69,7 +69,7 @@ fn vector_4_mnemonic_social_index_0() {
     );
 
     let child = derive(&root, "social", 0).expect("derive must succeed");
-    assert_eq!(child.nsec, "nsec17rnusheefhuryyhpprnq5l3zvpzhg24xm9n7588amun6uedvdtyqnpcsm4");
+    assert_eq!(child.nsec(), "nsec17rnusheefhuryyhpprnq5l3zvpzhg24xm9n7588amun6uedvdtyqnpcsm4");
     assert_eq!(child.purpose, "social");
     assert_eq!(child.index, 0);
 }
