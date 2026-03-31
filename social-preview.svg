@@ -182,79 +182,102 @@
   <!-- LEFT HALF: KEY TREE ILLUSTRATION                   -->
   <!-- ═══════════════════════════════════════════════════ -->
 
-  <!-- Subtle ambient glow at root of trunk -->
-  <ellipse cx="290" cy="455" rx="40" ry="12" fill="#f59e0b" opacity="0.08"/>
+  <g transform="translate(0, 55)">
 
-  <!-- TRUNK — amber gradient, prominent stroke -->
-  <!-- Main key shaft (trunk body) -->
-  <line x1="290" y1="455" x2="290" y2="265" stroke="url(#trunkGrad)" stroke-width="5" stroke-linecap="round"/>
+  <!-- ═══════════════════════════════════════════════════ -->
+  <!-- RASPBERRY PI BOARD — tree grows from the CPU      -->
+  <!-- ═══════════════════════════════════════════════════ -->
 
-  <!-- Raspberry Pi board at the base of the trunk -->
+  <!-- Board glow -->
+  <ellipse cx="290" cy="400" rx="80" ry="30" fill="#f59e0b" opacity="0.08"/>
+
+  <!-- Board body (larger, tight against trunk) -->
   <g filter="url(#glowAmber)">
-    <!-- Board body -->
-    <rect x="250" y="460" width="80" height="50" rx="4" fill="#1e293b" stroke="url(#amber)" stroke-width="2"/>
-    <!-- CPU chip -->
-    <rect x="275" y="472" width="18" height="18" rx="2" fill="url(#amberDark)" opacity="0.9"/>
-    <rect x="279" y="476" width="10" height="10" rx="1" fill="#0f172a"/>
-    <!-- GPIO pins (top edge) -->
-    <rect x="258" y="457" width="2" height="6" fill="#fbbf24" opacity="0.7"/>
-    <rect x="264" y="457" width="2" height="6" fill="#fbbf24" opacity="0.7"/>
-    <rect x="270" y="457" width="2" height="6" fill="#fbbf24" opacity="0.7"/>
-    <rect x="276" y="457" width="2" height="6" fill="#fbbf24" opacity="0.7"/>
-    <rect x="300" y="457" width="2" height="6" fill="#fbbf24" opacity="0.7"/>
-    <rect x="306" y="457" width="2" height="6" fill="#fbbf24" opacity="0.7"/>
-    <rect x="312" y="457" width="2" height="6" fill="#fbbf24" opacity="0.7"/>
-    <rect x="318" y="457" width="2" height="6" fill="#fbbf24" opacity="0.7"/>
-    <!-- USB port -->
-    <rect x="322" y="476" width="10" height="14" rx="1" fill="url(#steel)"/>
-    <!-- SD card slot -->
-    <rect x="248" y="480" width="6" height="10" rx="1" fill="url(#steel)"/>
-    <!-- Circuit traces -->
-    <line x1="293" y1="481" x2="310" y2="481" stroke="#f59e0b" stroke-width="0.8" opacity="0.5"/>
-    <line x1="293" y1="485" x2="315" y2="485" stroke="#f59e0b" stroke-width="0.8" opacity="0.5"/>
-    <!-- LED dots -->
-    <circle cx="260" cy="500" r="2" fill="#22d3ee" opacity="0.7"/>
-    <circle cx="268" cy="500" r="2" fill="#f59e0b" opacity="0.7"/>
+    <rect x="225" y="380" width="130" height="80" rx="6" fill="#1e293b" stroke="url(#amber)" stroke-width="2.5"/>
+
+    <!-- CPU chip (centred, trunk grows directly from top of this) -->
+    <rect x="265" y="390" width="50" height="36" rx="3" fill="url(#amberDark)" opacity="0.9"/>
+    <rect x="272" y="397" width="36" height="22" rx="2" fill="#0f172a"/>
+    <!-- CPU die markings -->
+    <line x1="278" y1="405" x2="302" y2="405" stroke="#f59e0b" stroke-width="0.8" opacity="0.5"/>
+    <line x1="278" y1="412" x2="298" y2="412" stroke="#f59e0b" stroke-width="0.8" opacity="0.5"/>
+
+    <!-- GPIO pin header (along top edge, trunk passes through gap) -->
+    <rect x="240" y="374" width="2" height="8" fill="#fbbf24" opacity="0.8"/>
+    <rect x="246" y="374" width="2" height="8" fill="#fbbf24" opacity="0.8"/>
+    <rect x="252" y="374" width="2" height="8" fill="#fbbf24" opacity="0.8"/>
+    <rect x="258" y="374" width="2" height="8" fill="#fbbf24" opacity="0.8"/>
+    <rect x="264" y="374" width="2" height="8" fill="#fbbf24" opacity="0.8"/>
+    <rect x="270" y="374" width="2" height="8" fill="#fbbf24" opacity="0.8"/>
+    <rect x="310" y="374" width="2" height="8" fill="#fbbf24" opacity="0.8"/>
+    <rect x="316" y="374" width="2" height="8" fill="#fbbf24" opacity="0.8"/>
+    <rect x="322" y="374" width="2" height="8" fill="#fbbf24" opacity="0.8"/>
+    <rect x="328" y="374" width="2" height="8" fill="#fbbf24" opacity="0.8"/>
+    <rect x="334" y="374" width="2" height="8" fill="#fbbf24" opacity="0.8"/>
+    <rect x="340" y="374" width="2" height="8" fill="#fbbf24" opacity="0.8"/>
+
+    <!-- USB port (right edge) -->
+    <rect x="347" y="400" width="12" height="22" rx="2" fill="url(#steel)"/>
+    <rect x="349" y="403" width="8" height="16" rx="1" fill="#334155"/>
+
+    <!-- Micro SD slot (left edge) -->
+    <rect x="219" y="410" width="10" height="16" rx="1" fill="url(#steel)"/>
+
+    <!-- Circuit traces radiating from CPU -->
+    <line x1="315" y1="408" x2="343" y2="408" stroke="#f59e0b" stroke-width="1" opacity="0.4"/>
+    <line x1="315" y1="414" x2="340" y2="414" stroke="#f59e0b" stroke-width="1" opacity="0.4"/>
+    <line x1="265" y1="408" x2="237" y2="408" stroke="#f59e0b" stroke-width="1" opacity="0.4"/>
+    <line x1="265" y1="414" x2="240" y2="414" stroke="#f59e0b" stroke-width="1" opacity="0.4"/>
+    <line x1="290" y1="426" x2="290" y2="444" stroke="#f59e0b" stroke-width="1" opacity="0.3"/>
+    <line x1="278" y1="426" x2="260" y2="444" stroke="#f59e0b" stroke-width="0.8" opacity="0.3"/>
+    <line x1="302" y1="426" x2="320" y2="444" stroke="#f59e0b" stroke-width="0.8" opacity="0.3"/>
+
+    <!-- LED indicators -->
+    <circle cx="238" cy="448" r="3" fill="#22d3ee" opacity="0.8"/>
+    <circle cx="248" cy="448" r="3" fill="#f59e0b" opacity="0.8"/>
+    <circle cx="258" cy="448" r="3" fill="#22c55e" opacity="0.6"/>
+
+    <!-- Mounting holes -->
+    <circle cx="233" cy="388" r="4" fill="none" stroke="#475569" stroke-width="1"/>
+    <circle cx="347" cy="388" r="4" fill="none" stroke="#475569" stroke-width="1"/>
+    <circle cx="233" cy="452" r="4" fill="none" stroke="#475569" stroke-width="1"/>
+    <circle cx="347" cy="452" r="4" fill="none" stroke="#475569" stroke-width="1"/>
   </g>
 
+  <!-- TRUNK — grows directly from CPU chip to branch origin -->
+  <line x1="290" y1="390" x2="290" y2="265" stroke="url(#trunkGrad)" stroke-width="5" stroke-linecap="round"/>
+
   <!-- Trunk notches (derivation markers) -->
-  <rect x="292" y="370" width="12" height="6" rx="1" fill="url(#amber)" opacity="0.9"/>
-  <rect x="292" y="388" width="8" height="6" rx="1" fill="url(#amber)" opacity="0.9"/>
-  <rect x="292" y="406" width="14" height="6" rx="1" fill="url(#amber)" opacity="0.9"/>
-  <rect x="292" y="424" width="10" height="6" rx="1" fill="url(#amber)" opacity="0.9"/>
-  <rect x="292" y="442" width="14" height="6" rx="1" fill="url(#amber)" opacity="0.9"/>
+  <rect x="292" y="290" width="12" height="6" rx="1" fill="url(#amber)" opacity="0.9"/>
+  <rect x="292" y="310" width="8" height="6" rx="1" fill="url(#amber)" opacity="0.9"/>
+  <rect x="292" y="330" width="14" height="6" rx="1" fill="url(#amber)" opacity="0.9"/>
+  <rect x="292" y="355" width="10" height="6" rx="1" fill="url(#amber)" opacity="0.9"/>
 
   <!-- ── BRANCH ORIGIN POINT at y=265 ── -->
-  <!-- Small hub circle at branch-off point -->
-  <circle cx="290" cy="265" r="6" fill="#fbbf24" opacity="0.6" filter="url(#glow)"/>
+  <circle cx="290" cy="265" r="7" fill="#fbbf24" opacity="0.7" filter="url(#glowAmber)"/>
 
-  <!-- ── BRANCH 1: Far Left (to x=140, y=160) ── -->
+  <!-- ── BRANCH 1: Far Left ── -->
   <line x1="290" y1="265" x2="140" y2="165" stroke="url(#branchGrad1)" stroke-width="3" stroke-linecap="round"/>
-  <!-- Sub-branch from branch 1 tip -->
   <line x1="140" y1="165" x2="95" y2="125" stroke="#64748b" stroke-width="2" stroke-linecap="round" opacity="0.8"/>
   <line x1="140" y1="165" x2="165" y2="118" stroke="#64748b" stroke-width="2" stroke-linecap="round" opacity="0.8"/>
 
-  <!-- ── BRANCH 2: Left-Centre (to x=210, y=145) ── -->
+  <!-- ── BRANCH 2: Left-Centre ── -->
   <line x1="290" y1="265" x2="210" y2="148" stroke="url(#branchGrad2)" stroke-width="3" stroke-linecap="round"/>
-  <!-- Sub-branch from branch 2 tip -->
   <line x1="210" y1="148" x2="185" y2="108" stroke="#64748b" stroke-width="2" stroke-linecap="round" opacity="0.8"/>
   <line x1="210" y1="148" x2="232" y2="105" stroke="#64748b" stroke-width="2" stroke-linecap="round" opacity="0.8"/>
 
-  <!-- ── BRANCH 3: Centre (straight up, to x=290, y=135) ── -->
+  <!-- ── BRANCH 3: Centre ── -->
   <line x1="290" y1="265" x2="290" y2="138" stroke="url(#branchGrad3)" stroke-width="3" stroke-linecap="round"/>
-  <!-- Sub-branch from branch 3 tip -->
   <line x1="290" y1="138" x2="265" y2="100" stroke="#64748b" stroke-width="2" stroke-linecap="round" opacity="0.8"/>
   <line x1="290" y1="138" x2="315" y2="100" stroke="#64748b" stroke-width="2" stroke-linecap="round" opacity="0.8"/>
 
-  <!-- ── BRANCH 4: Right-Centre (to x=368, y=148) ── -->
+  <!-- ── BRANCH 4: Right-Centre ── -->
   <line x1="290" y1="265" x2="368" y2="148" stroke="url(#branchGrad2)" stroke-width="3" stroke-linecap="round"/>
-  <!-- Sub-branch from branch 4 tip -->
   <line x1="368" y1="148" x2="345" y2="108" stroke="#64748b" stroke-width="2" stroke-linecap="round" opacity="0.8"/>
   <line x1="368" y1="148" x2="392" y2="105" stroke="#64748b" stroke-width="2" stroke-linecap="round" opacity="0.8"/>
 
-  <!-- ── BRANCH 5: Far Right (to x=440, y=165) ── -->
+  <!-- ── BRANCH 5: Far Right ── -->
   <line x1="290" y1="265" x2="440" y2="165" stroke="url(#branchGrad1)" stroke-width="3" stroke-linecap="round"/>
-  <!-- Sub-branch from branch 5 tip -->
   <line x1="440" y1="165" x2="415" y2="125" stroke="#64748b" stroke-width="2" stroke-linecap="round" opacity="0.8"/>
   <line x1="440" y1="165" x2="468" y2="122" stroke="#64748b" stroke-width="2" stroke-linecap="round" opacity="0.8"/>
 
@@ -384,6 +407,8 @@
   <line x1="232" y1="108" x2="265" y2="103" stroke="#1e293b" stroke-width="0.7" opacity="0.4" stroke-dasharray="2,6"/>
   <line x1="315" y1="103" x2="345" y2="111" stroke="#1e293b" stroke-width="0.7" opacity="0.4" stroke-dasharray="2,6"/>
   <line x1="392" y1="108" x2="415" y2="128" stroke="#1e293b" stroke-width="0.7" opacity="0.4" stroke-dasharray="2,6"/>
+
+  </g><!-- end illustration transform -->
 
   <!-- ═══════════════════════════════════════════════════ -->
   <!-- DIVIDER                                            -->
