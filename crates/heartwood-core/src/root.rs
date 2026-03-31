@@ -44,7 +44,7 @@ pub fn from_nsec_bytes(nsec_bytes: &[u8; 32]) -> Result<TreeRoot, HeartwoodError
 /// returned npub is the identity the bunker signs on behalf of.
 pub fn npub_from_nsec(nsec: &str) -> Result<String, HeartwoodError> {
     let nsec_bytes = decode_nsec(nsec)?;
-    let signing_key = SigningKey::from_bytes(&nsec_bytes)
+    let signing_key = SigningKey::from_bytes(&*nsec_bytes)
         .map_err(|e| HeartwoodError::Derivation(format!("invalid secret key: {e}")))?;
     let verifying_key = signing_key.verifying_key();
     let pubkey_bytes: [u8; 32] = verifying_key.to_bytes().into();
@@ -53,10 +53,8 @@ pub fn npub_from_nsec(nsec: &str) -> Result<String, HeartwoodError> {
 
 /// Create a TreeRoot from a bech32-encoded nsec string.
 pub fn from_nsec(nsec: &str) -> Result<TreeRoot, HeartwoodError> {
-    let mut nsec_bytes = decode_nsec(nsec)?;
-    let result = from_nsec_bytes(&nsec_bytes);
-    nsec_bytes.zeroize();
-    result
+    let nsec_bytes = decode_nsec(nsec)?;
+    from_nsec_bytes(&nsec_bytes)
 }
 
 /// Create a TreeRoot from a BIP-39 mnemonic phrase.

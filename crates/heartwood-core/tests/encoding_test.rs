@@ -6,7 +6,7 @@ fn round_trip_nsec() {
     let nsec = encode_nsec(&key);
     assert!(nsec.starts_with("nsec1"));
     let decoded = decode_nsec(&nsec).unwrap();
-    assert_eq!(decoded, key);
+    assert_eq!(*decoded, key);
 }
 
 #[test]
