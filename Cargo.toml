@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/heartwood-core",
     "crates/heartwood-nip46",
+    "crates/heartwood-device",
 ]
 
 [workspace.package]

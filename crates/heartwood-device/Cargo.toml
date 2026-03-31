@@ -1,0 +1,19 @@
+[package]
+name = "heartwood-device"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Heartwood device binary for Raspberry Pi"
+
+[dependencies]
+heartwood-core = { path = "../heartwood-core" }
+heartwood-nip46 = { path = "../heartwood-nip46" }
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+qrcode = "0.14"
+tower-http = { version = "0.6", features = ["fs", "cors"] }
