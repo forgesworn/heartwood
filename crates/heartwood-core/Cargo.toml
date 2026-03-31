@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "nsec-tree deterministic identity derivation — Rust port"
+keywords = ["nostr", "nsec-tree", "signing", "identity", "cryptography"]
+categories = ["cryptography", "authentication"]
 
 [dependencies]
 k256 = { version = "0.13", features = ["schnorr", "arithmetic"] }

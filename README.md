@@ -57,7 +57,7 @@ Scan the .onion address with your Nostr client to pair.
 ## Development
 
 ```bash
-cargo test                    # Run all tests (40+)
+cargo test                    # Run all tests (55)
 cargo test -p heartwood-core  # Core crypto tests only
 cargo run -p heartwood-device # Run device binary (terminal mode)
 ```
