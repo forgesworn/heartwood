@@ -1,6 +1,6 @@
 // crates/heartwood-core/src/proof.rs
 use k256::schnorr::{SigningKey, Signature, VerifyingKey};
-use k256::ecdsa::signature::{Signer, Verifier};
+use signature::{Signer, Verifier};
 
 use crate::encoding::bytes_to_hex;
 use crate::types::{HeartwoodError, Identity, LinkageProof, TreeRoot};

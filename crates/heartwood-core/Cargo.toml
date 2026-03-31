@@ -8,6 +8,7 @@ description = "nsec-tree deterministic identity derivation — Rust port"
 
 [dependencies]
 k256 = { version = "0.13", features = ["schnorr", "arithmetic"] }
+signature = "2"
 hmac = "0.12"
 sha2 = "0.10"
 zeroize = { version = "1", features = ["derive"] }
