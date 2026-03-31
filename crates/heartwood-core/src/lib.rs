@@ -1,17 +1,17 @@
 // crates/heartwood-core/src/lib.rs
-pub mod types;
-pub mod encoding;
-pub mod validate;
 pub mod derive;
-pub mod root;
-pub mod proof;
+pub mod encoding;
 pub mod persona;
+pub mod proof;
 pub mod recover;
+pub mod root;
+pub mod types;
+pub mod validate;
 
-pub use types::{TreeRoot, Identity, Persona, LinkageProof, HeartwoodError};
-pub use root::{from_nsec, from_nsec_bytes, from_mnemonic};
 pub use derive::{derive, derive_from_identity};
+pub use encoding::{decode_npub, decode_nsec, encode_npub, encode_nsec};
+pub use persona::{derive_from_persona, derive_persona};
 pub use proof::{create_blind_proof, create_full_proof, verify_proof};
-pub use persona::{derive_persona, derive_from_persona};
 pub use recover::recover;
-pub use encoding::{encode_nsec, decode_nsec, encode_npub, decode_npub};
+pub use root::{from_mnemonic, from_nsec, from_nsec_bytes};
+pub use types::{HeartwoodError, Identity, LinkageProof, Persona, TreeRoot};

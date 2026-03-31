@@ -1,8 +1,12 @@
 // crates/heartwood-device/src/oled.rs
 //! OLED display driver with terminal fallback for non-Pi environments.
 
-use qrcode::{QrCode, EcLevel};
+// Scaffold: `show_mnemonic_word` and `clear` are part of the device UX flow
+// and will be called from the setup wizard in Phase 2.
+#![allow(dead_code)]
+
 use qrcode::render::unicode;
+use qrcode::{EcLevel, QrCode};
 use tracing::info;
 
 /// OLED display abstraction.

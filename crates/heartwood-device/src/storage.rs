@@ -1,6 +1,11 @@
 // crates/heartwood-device/src/storage.rs
 //! Encrypted secret storage on the device filesystem.
 
+// Scaffold: `config_path`, `ensure_dir`, `save_master_secret`,
+// `load_master_secret`, `save_config`, and `load_config` will be called from
+// the setup and recovery flows in Phase 2.
+#![allow(dead_code)]
+
 use std::fs;
 use std::io;
 use std::path::PathBuf;

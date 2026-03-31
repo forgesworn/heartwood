@@ -60,7 +60,7 @@ pub fn derive(root: &TreeRoot, purpose: &str, index: u32) -> Result<Identity, He
             }
             Err(_) => {
                 // Invalid scalar (exceeds curve order), try next index
-                if current_index >= MAX_INDEX {
+                if current_index == MAX_INDEX {
                     return Err(HeartwoodError::IndexOverflow);
                 }
                 current_index += 1;

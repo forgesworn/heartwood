@@ -1,5 +1,5 @@
 // crates/heartwood-core/src/proof.rs
-use k256::schnorr::{SigningKey, Signature, VerifyingKey};
+use k256::schnorr::{Signature, SigningKey, VerifyingKey};
 use signature::{Signer, Verifier};
 
 use crate::encoding::bytes_to_hex;
@@ -48,10 +48,8 @@ pub fn create_full_proof(
     let master_hex = bytes_to_hex(&signing_key.verifying_key().to_bytes());
     let child_hex = bytes_to_hex(&child.public_key);
 
-    let attestation = format!(
-        "nsec-tree:link:{master_hex}:{child_hex}:{}:{}",
-        child.purpose, child.index
-    );
+    let attestation =
+        format!("nsec-tree:link:{master_hex}:{child_hex}:{}:{}", child.purpose, child.index);
 
     let sig: Signature = signing_key.sign(attestation.as_bytes());
     let signature = bytes_to_hex(&sig.to_bytes());
@@ -70,17 +68,16 @@ pub fn create_full_proof(
 ///
 /// Returns `Ok(true)` if the signature is valid, `Ok(false)` if invalid.
 pub fn verify_proof(proof: &LinkageProof) -> Result<bool, HeartwoodError> {
-    let master_bytes = hex::decode(&proof.master_pubkey)
-        .map_err(|_| HeartwoodError::InvalidProof)?;
+    let master_bytes =
+        hex::decode(&proof.master_pubkey).map_err(|_| HeartwoodError::InvalidProof)?;
 
-    let verifying_key = VerifyingKey::from_bytes(&master_bytes)
-        .map_err(|_| HeartwoodError::InvalidProof)?;
+    let verifying_key =
+        VerifyingKey::from_bytes(&master_bytes).map_err(|_| HeartwoodError::InvalidProof)?;
 
-    let sig_bytes = hex::decode(&proof.signature)
-        .map_err(|_| HeartwoodError::InvalidProof)?;
+    let sig_bytes = hex::decode(&proof.signature).map_err(|_| HeartwoodError::InvalidProof)?;
 
-    let signature = Signature::try_from(sig_bytes.as_slice())
-        .map_err(|_| HeartwoodError::InvalidProof)?;
+    let signature =
+        Signature::try_from(sig_bytes.as_slice()).map_err(|_| HeartwoodError::InvalidProof)?;
 
     match verifying_key.verify(proof.attestation.as_bytes(), &signature) {
         Ok(()) => Ok(true),

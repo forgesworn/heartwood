@@ -1,4 +1,4 @@
-use heartwood_core::encoding::{encode_nsec, decode_nsec, encode_npub, decode_npub};
+use heartwood_core::encoding::{decode_npub, decode_nsec, encode_npub, encode_nsec};
 
 #[test]
 fn round_trip_nsec() {

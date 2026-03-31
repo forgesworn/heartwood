@@ -15,10 +15,7 @@ fn vector_4_mnemonic_social_index_0() {
     );
 
     let child = derive(&root, "social", 0).expect("derive must succeed");
-    assert_eq!(
-        child.nsec,
-        "nsec17rnusheefhuryyhpprnq5l3zvpzhg24xm9n7588amun6uedvdtyqnpcsm4"
-    );
+    assert_eq!(child.nsec, "nsec17rnusheefhuryyhpprnq5l3zvpzhg24xm9n7588amun6uedvdtyqnpcsm4");
     assert_eq!(child.purpose, "social");
     assert_eq!(child.index, 0);
 }
@@ -28,10 +25,8 @@ fn vector_4_mnemonic_social_index_0() {
 fn vector_5_path_independence() {
     // NIP-06 key derived at m/44'/1237'/0'/0/0 from the same mnemonic
     let nip06_hex = "5f29af3b9676180290e77a4efad265c4c2ff28a5302461f73597fda26bb25731";
-    let nip06_bytes: [u8; 32] = hex::decode(nip06_hex)
-        .expect("valid hex")
-        .try_into()
-        .expect("32 bytes");
+    let nip06_bytes: [u8; 32] =
+        hex::decode(nip06_hex).expect("valid hex").try_into().expect("32 bytes");
 
     let nsec_root = from_nsec_bytes(&nip06_bytes).expect("nsec root must succeed");
     let mnemonic_root = from_mnemonic(MNEMONIC, None).expect("mnemonic root must succeed");

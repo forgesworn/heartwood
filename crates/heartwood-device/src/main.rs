@@ -1,8 +1,8 @@
+mod audit;
 mod oled;
 mod storage;
 mod tor;
 mod web;
-mod audit;
 
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -37,9 +37,7 @@ async fn main() {
         oled.show_text("heartwood.local");
     }
 
-    let state = Arc::new(web::AppState {
-        audit_log: Mutex::new(audit_log),
-    });
+    let state = Arc::new(web::AppState { audit_log: Mutex::new(audit_log) });
     let app = web::create_router(state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();

@@ -4,11 +4,11 @@
 use std::sync::Arc;
 
 use axum::{
-    Router,
     extract::State,
-    http::{StatusCode, header},
+    http::{header, StatusCode},
     response::IntoResponse,
     routing::get,
+    Router,
 };
 use serde_json::json;
 use tokio::sync::Mutex;
@@ -23,11 +23,7 @@ pub struct AppState {
 /// Serve the bundled `index.html`.
 async fn serve_index() -> impl IntoResponse {
     let html = include_str!("../../../web/index.html");
-    (
-        StatusCode::OK,
-        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
-        html,
-    )
+    (StatusCode::OK, [(header::CONTENT_TYPE, "text/html; charset=utf-8")], html)
 }
 
 /// `GET /api/status` — return basic device status as JSON.

@@ -1,6 +1,6 @@
 // crates/heartwood-core/src/encoding.rs
-use bech32::{Bech32, Hrp};
 use crate::types::HeartwoodError;
+use bech32::{Bech32, Hrp};
 
 fn encode_bech32(hrp_str: &str, bytes: &[u8; 32]) -> String {
     let hrp = Hrp::parse(hrp_str).expect("valid hrp");
@@ -8,14 +8,11 @@ fn encode_bech32(hrp_str: &str, bytes: &[u8; 32]) -> String {
 }
 
 fn decode_bech32(expected_hrp: &str, encoded: &str) -> Result<[u8; 32], HeartwoodError> {
-    let (hrp, data) = bech32::decode(encoded)
-        .map_err(|_| HeartwoodError::InvalidNsec)?;
+    let (hrp, data) = bech32::decode(encoded).map_err(|_| HeartwoodError::InvalidNsec)?;
     if hrp.as_str() != expected_hrp {
         return Err(HeartwoodError::InvalidNsec);
     }
-    let bytes: [u8; 32] = data
-        .try_into()
-        .map_err(|_| HeartwoodError::InvalidNsec)?;
+    let bytes: [u8; 32] = data.try_into().map_err(|_| HeartwoodError::InvalidNsec)?;
     Ok(bytes)
 }
 
