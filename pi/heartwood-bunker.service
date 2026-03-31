@@ -1,7 +1,8 @@
 [Unit]
-Description=Heartwood signing appliance
-After=network-online.target
+Description=Heartwood NIP-46 bunker
+After=network-online.target heartwood.service
 Wants=network-online.target
+Requires=heartwood.service
 StartLimitBurst=5
 StartLimitIntervalSec=60
 
@@ -9,16 +10,17 @@ StartLimitIntervalSec=60
 Type=simple
 User=heartwood
 Group=heartwood
-ExecStart=/usr/local/bin/heartwood
+WorkingDirectory=/opt/heartwood/bunker
+ExecStart=/usr/bin/node index.mjs
 Restart=always
-RestartSec=10
-Environment=RUST_LOG=info
-Environment=HEARTWOOD_BIND=0.0.0.0:3000
+RestartSec=15
+Environment=NODE_ENV=production
 
 # Security hardening
 ProtectSystem=strict
-ProtectHome=true
+ProtectHome=read-only
 ReadWritePaths=/var/lib/heartwood
+ReadOnlyPaths=/opt/heartwood
 NoNewPrivileges=true
 PrivateTmp=true
 
@@ -26,7 +28,6 @@ PrivateTmp=true
 CapabilityBoundingSet=
 SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM
-MemoryDenyWriteExecute=true
 RestrictRealtime=true
 RestrictSUIDSGID=true
 LockPersonality=true
@@ -34,10 +35,6 @@ ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
 RestrictNamespaces=true
-
-# Device access (only I2C for OLED display)
-DevicePolicy=closed
-DeviceAllow=/dev/i2c-1 rw
 
 [Install]
 WantedBy=multi-user.target

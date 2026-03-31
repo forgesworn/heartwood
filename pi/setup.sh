@@ -5,20 +5,11 @@ set -euo pipefail
 
 echo "=== Heartwood Pi Setup ==="
 
-# Install dependencies
-sudo apt-get update
-sudo apt-get install -y tor
-
 # Create heartwood user
 sudo useradd -r -s /usr/sbin/nologin heartwood || true
 sudo mkdir -p /var/lib/heartwood
 sudo chown heartwood:heartwood /var/lib/heartwood
 sudo chmod 700 /var/lib/heartwood
-
-# Configure Tor hidden service
-sudo mkdir -p /etc/tor/torrc.d
-sudo cp torrc /etc/tor/torrc.d/heartwood.conf
-sudo systemctl restart tor
 
 # Install heartwood binary
 if [ -f "../target/release/heartwood-device" ]; then
@@ -40,5 +31,4 @@ echo "=== Heartwood installed ==="
 echo "Check status: sudo systemctl status heartwood"
 echo "View logs:    sudo journalctl -u heartwood -f"
 echo ""
-echo "Tor address will appear shortly at:"
-echo "  sudo cat /var/lib/tor/heartwood/hostname"
+echo "Open http://$(hostname).local:3000 in your browser to configure."

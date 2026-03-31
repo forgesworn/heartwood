@@ -1,4 +1,4 @@
 # Heartwood Tor hidden service configuration
 # Copy to /etc/tor/torrc.d/heartwood.conf
 HiddenServiceDir /var/lib/tor/heartwood/
-HiddenServicePort 80 127.0.0.1:8080
+HiddenServicePort 80 127.0.0.1:3000
