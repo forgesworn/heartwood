@@ -7,7 +7,7 @@ use crate::types::{HeartwoodError, Identity, LinkageProof, TreeRoot};
 
 /// Create a blind linkage proof (no purpose/index revealed).
 ///
-/// Attestation format: `nsec-tree:own:{master_hex}:{child_hex}`
+/// Attestation format: `nsec-tree:own|{master_hex}|{child_hex}`
 /// Signed with the master (root) secret key using BIP-340 Schnorr.
 pub fn create_blind_proof(
     root: &TreeRoot,
@@ -19,7 +19,7 @@ pub fn create_blind_proof(
     let master_hex = bytes_to_hex(&signing_key.verifying_key().to_bytes());
     let child_hex = bytes_to_hex(&child.public_key);
 
-    let attestation = format!("nsec-tree:own:{master_hex}:{child_hex}");
+    let attestation = format!("nsec-tree:own|{master_hex}|{child_hex}");
 
     let sig: Signature = signing_key.sign(attestation.as_bytes());
     let signature = bytes_to_hex(&sig.to_bytes());
@@ -36,7 +36,7 @@ pub fn create_blind_proof(
 
 /// Create a full linkage proof (purpose and index revealed).
 ///
-/// Attestation format: `nsec-tree:link:{master_hex}:{child_hex}:{purpose}:{index}`
+/// Attestation format: `nsec-tree:link|{master_hex}|{child_hex}|{purpose}|{index}`
 /// Signed with the master (root) secret key using BIP-340 Schnorr.
 pub fn create_full_proof(
     root: &TreeRoot,
@@ -49,7 +49,7 @@ pub fn create_full_proof(
     let child_hex = bytes_to_hex(&child.public_key);
 
     let attestation =
-        format!("nsec-tree:link:{master_hex}:{child_hex}:{}:{}", child.purpose, child.index);
+        format!("nsec-tree:link|{master_hex}|{child_hex}|{}|{}", child.purpose, child.index);
 
     let sig: Signature = signing_key.sign(attestation.as_bytes());
     let signature = bytes_to_hex(&sig.to_bytes());

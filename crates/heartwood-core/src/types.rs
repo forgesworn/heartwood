@@ -36,6 +36,8 @@ pub enum HeartwoodError {
     InvalidProof,
     #[error("scan range must be 1..={MAX_SCAN_RANGE}")]
     InvalidScanRange,
+    #[error("invalid persona name: {0}")]
+    InvalidPersonaName(String),
     #[error("key derivation failed: {0}")]
     Derivation(String),
 }

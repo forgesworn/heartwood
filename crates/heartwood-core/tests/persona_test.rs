@@ -44,3 +44,13 @@ fn persona_derivation_is_deterministic() {
     assert_eq!(persona_a.index, 5);
     assert_eq!(persona_b.index, 5);
 }
+
+#[test]
+fn persona_name_with_pipe_rejected() {
+    let root = root_01();
+    let result = derive_persona(&root, "alice|evil", None);
+    match result {
+        Err(e) => assert!(e.to_string().contains("persona name must not contain '|'")),
+        Ok(_) => panic!("expected pipe in persona name to be rejected"),
+    }
+}

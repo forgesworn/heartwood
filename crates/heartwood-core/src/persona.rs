@@ -2,6 +2,17 @@
 use crate::derive::{derive, derive_from_identity};
 use crate::types::{HeartwoodError, Identity, Persona, TreeRoot};
 
+/// Validate that a persona name does not contain characters that would
+/// break the pipe-delimited attestation format.
+fn validate_persona_name(name: &str) -> Result<(), HeartwoodError> {
+    if name.contains('|') {
+        return Err(HeartwoodError::InvalidPersonaName(
+            "persona name must not contain '|' (attestation delimiter)".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Derive a named persona from a tree root.
 ///
 /// The purpose string is constructed as `nostr:persona:{name}`.
@@ -11,6 +22,7 @@ pub fn derive_persona(
     name: &str,
     index: Option<u32>,
 ) -> Result<Persona, HeartwoodError> {
+    validate_persona_name(name)?;
     let purpose = format!("nostr:persona:{name}");
     let idx = index.unwrap_or(0);
     let identity = derive(root, &purpose, idx)?;
