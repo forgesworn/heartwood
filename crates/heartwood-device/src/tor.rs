@@ -3,7 +3,6 @@
 
 // Scaffold: `with_dir` and `is_running` will be called from the main daemon
 // and health-check endpoints in Phase 2.
-#![allow(dead_code)]
 
 use std::fs;
 use std::path::PathBuf;

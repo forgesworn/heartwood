@@ -1,6 +1,11 @@
+// Scaffold modules -- many methods are wired up in later phases
+#[allow(dead_code)]
 mod audit;
+#[allow(dead_code)]
 mod oled;
+#[allow(dead_code)]
 mod storage;
+#[allow(dead_code)]
 mod tor;
 mod web;
 
