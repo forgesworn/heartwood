@@ -1,0 +1,185 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            binary: heartwood-device
+            asset: heartwood-aarch64-linux
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            binary: heartwood-device
+            asset: heartwood-x86_64-linux
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Set linker for aarch64
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          mkdir -p .cargo
+          echo '[target.aarch64-unknown-linux-gnu]' >> .cargo/config.toml
+          echo 'linker = "aarch64-linux-gnu-gcc"' >> .cargo/config.toml
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }} -p heartwood-device
+
+      - name: Package binary
+        run: |
+          cp target/${{ matrix.target }}/release/${{ matrix.binary }} ${{ matrix.asset }}
+          chmod +x ${{ matrix.asset }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create install script
+        run: |
+          cat > artifacts/install.sh << 'SCRIPT'
+          #!/usr/bin/env bash
+          # Heartwood one-liner installer for Raspberry Pi
+          set -euo pipefail
+
+          echo "=== Installing Heartwood ==="
+
+          # Detect architecture
+          ARCH=$(uname -m)
+          case "$ARCH" in
+            aarch64) ASSET="heartwood-aarch64-linux" ;;
+            x86_64)  ASSET="heartwood-x86_64-linux" ;;
+            *) echo "Unsupported architecture: $ARCH"; exit 1 ;;
+          esac
+
+          # Get latest release URL
+          REPO="forgesworn/heartwood"
+          TAG=$(curl -sL "https://api.github.com/repos/$REPO/releases/latest" | grep '"tag_name"' | head -1 | cut -d'"' -f4)
+          URL="https://github.com/$REPO/releases/download/$TAG/$ASSET"
+
+          echo "Downloading Heartwood $TAG for $ARCH..."
+          sudo curl -sL "$URL" -o /usr/local/bin/heartwood
+          sudo chmod +x /usr/local/bin/heartwood
+
+          # Install Tor if not present
+          if ! command -v tor &> /dev/null; then
+            echo "Installing Tor..."
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq tor
+          fi
+
+          # Create heartwood user
+          sudo useradd -r -s /usr/sbin/nologin heartwood 2>/dev/null || true
+          sudo mkdir -p /var/lib/heartwood
+          sudo chown heartwood:heartwood /var/lib/heartwood
+          sudo chmod 700 /var/lib/heartwood
+
+          # Configure Tor hidden service
+          sudo mkdir -p /etc/tor/torrc.d
+          echo "HiddenServiceDir /var/lib/tor/heartwood/" | sudo tee /etc/tor/torrc.d/heartwood.conf > /dev/null
+          echo "HiddenServicePort 80 127.0.0.1:8080" | sudo tee -a /etc/tor/torrc.d/heartwood.conf > /dev/null
+          sudo systemctl restart tor
+
+          # Install systemd service
+          cat << 'SERVICE' | sudo tee /etc/systemd/system/heartwood.service > /dev/null
+          [Unit]
+          Description=Heartwood signing appliance
+          After=network-online.target tor.service
+          Wants=network-online.target tor.service
+
+          [Service]
+          Type=simple
+          User=heartwood
+          Group=heartwood
+          ExecStart=/usr/local/bin/heartwood
+          Restart=always
+          RestartSec=5
+          Environment=RUST_LOG=info
+          ProtectSystem=strict
+          ProtectHome=true
+          ReadWritePaths=/var/lib/heartwood
+          NoNewPrivileges=true
+          PrivateTmp=true
+
+          [Install]
+          WantedBy=multi-user.target
+          SERVICE
+
+          sudo systemctl daemon-reload
+          sudo systemctl enable heartwood
+          sudo systemctl start heartwood
+
+          echo ""
+          echo "=== Heartwood installed ==="
+          echo "Status:  sudo systemctl status heartwood"
+          echo "Logs:    sudo journalctl -u heartwood -f"
+          echo ""
+          echo "Waiting for Tor hidden service..."
+          for i in $(seq 1 60); do
+            if [ -f /var/lib/tor/heartwood/hostname ]; then
+              echo ""
+              echo "Your .onion address:"
+              sudo cat /var/lib/tor/heartwood/hostname
+              echo ""
+              echo "Scan this with your Nostr client to pair."
+              exit 0
+            fi
+            sleep 1
+            printf "."
+          done
+          echo ""
+          echo "Tor is still bootstrapping. Check later:"
+          echo "  sudo cat /var/lib/tor/heartwood/hostname"
+          SCRIPT
+          chmod +x artifacts/install.sh
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            artifacts/heartwood-aarch64-linux/heartwood-aarch64-linux
+            artifacts/heartwood-x86_64-linux/heartwood-x86_64-linux
+            artifacts/install.sh
