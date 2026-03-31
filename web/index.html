@@ -258,8 +258,14 @@
 
         async function doReset() {
             if (!confirm('This will wipe the stored secret from the device. Are you sure?')) return;
+            const password = prompt('Enter your device password to confirm reset:');
+            if (!password) return;
             try {
-                const res = await fetch('/api/reset', { method: 'POST' });
+                const res = await fetch('/api/reset', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password }),
+                });
                 const data = await res.json();
                 if (res.ok) {
                     document.getElementById('configured').classList.add('hidden');
