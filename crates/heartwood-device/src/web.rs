@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{Request, State},
+    extract::{DefaultBodyLimit, Request, State},
     http::{header, StatusCode},
     middleware::{self, Next},
     response::IntoResponse,
@@ -14,7 +14,6 @@ use axum::{
 use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::Mutex;
-use tower_http::cors::{self, CorsLayer};
 use tracing::info;
 
 use crate::audit::AuditLog;
@@ -197,9 +196,10 @@ async fn api_setup(
     };
 
     if let Err(e) = storage.save_master_secret(payload.as_bytes()) {
+        tracing::error!("Failed to save master secret: {e}");
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
-            axum::Json(json!({"error": format!("failed to save: {e}")})),
+            axum::Json(json!({"error": "failed to save configuration"})),
         );
     }
 
@@ -218,10 +218,13 @@ async fn api_reset(State(state): State<Arc<AppState>>) -> impl IntoResponse {
             info!("Device reset. Returning to setup mode.");
             (StatusCode::OK, axum::Json(json!({"status": "reset complete"})))
         }
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            axum::Json(json!({"error": format!("failed to reset: {e}")})),
-        ),
+        Err(e) => {
+            tracing::error!("Failed to reset device: {e}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(json!({"error": "failed to reset device"})),
+            )
+        }
     }
 }
 
@@ -331,11 +334,19 @@ async fn api_set_relays(
     State(state): State<Arc<AppState>>,
     axum::Json(req): axum::Json<RelayUpdate>,
 ) -> impl IntoResponse {
+    const MAX_RELAYS: usize = 20;
+    const MAX_RELAY_URL_LEN: usize = 256;
+
     let relays: Vec<String> = req
         .relays
         .into_iter()
+        .take(MAX_RELAYS)
         .map(|r| r.trim().to_string())
-        .filter(|r| r.starts_with("wss://") || r.starts_with("ws://"))
+        .filter(|r| {
+            (r.starts_with("wss://") || r.starts_with("ws://"))
+                && r.len() <= MAX_RELAY_URL_LEN
+                && r.is_ascii()
+        })
         .collect();
 
     if relays.is_empty() {
@@ -351,10 +362,13 @@ async fn api_set_relays(
             info!("Relay list updated: {} relays", relays.len());
             (StatusCode::OK, axum::Json(json!({ "relays": relays })))
         }
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            axum::Json(json!({"error": format!("failed to save config: {e}")})),
-        ),
+        Err(e) => {
+            tracing::error!("Failed to save relay config: {e}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(json!({"error": "failed to save configuration"})),
+            )
+        }
     }
 }
 
@@ -389,10 +403,13 @@ async fn api_set_password(
             info!("Device password set");
             (StatusCode::OK, axum::Json(json!({"status": "password set"})))
         }
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            axum::Json(json!({"error": format!("failed to save: {e}")})),
-        ),
+        Err(e) => {
+            tracing::error!("Failed to save password: {e}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(json!({"error": "failed to save configuration"})),
+            )
+        }
     }
 }
 
@@ -412,10 +429,13 @@ async fn api_set_tor(
             info!("Tor {}", if req.enabled { "enabled" } else { "disabled" });
             (StatusCode::OK, axum::Json(json!({"tor_enabled": req.enabled})))
         }
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            axum::Json(json!({"error": format!("failed to save: {e}")})),
-        ),
+        Err(e) => {
+            tracing::error!("Failed to save tor config: {e}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(json!({"error": "failed to save configuration"})),
+            )
+        }
     }
 }
 
@@ -433,12 +453,10 @@ async fn api_audit(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 }
 
 /// Build and return the application router.
+///
+/// No CORS layer is applied — the web UI uses same-origin requests.
+/// Cross-origin access is denied by default for security.
 pub fn create_router(state: Arc<AppState>) -> Router {
-    let cors = CorsLayer::new()
-        .allow_origin(cors::AllowOrigin::any())
-        .allow_methods([axum::http::Method::GET, axum::http::Method::POST])
-        .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION]);
-
     Router::new()
         .route("/", get(serve_index))
         .route("/api/status", get(api_status))
@@ -450,6 +468,6 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/tor", post(api_set_tor))
         .route("/api/audit", get(api_audit))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
-        .layer(cors)
+        .layer(DefaultBodyLimit::max(65536))
         .with_state(state)
 }
