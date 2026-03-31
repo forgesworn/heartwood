@@ -291,7 +291,17 @@
             ul.innerHTML = '';
             relays.forEach((r, i) => {
                 const li = document.createElement('li');
-                li.innerHTML = `<input type="text" value="${r}" data-idx="${i}" spellcheck="false"><button class="relay-rm" onclick="removeRelay(${i})">&times;</button>`;
+                const input = document.createElement('input');
+                input.type = 'text';
+                input.value = r;
+                input.dataset.idx = i;
+                input.spellcheck = false;
+                const btn = document.createElement('button');
+                btn.className = 'relay-rm';
+                btn.textContent = '\u00d7';
+                btn.onclick = () => removeRelay(i);
+                li.appendChild(input);
+                li.appendChild(btn);
                 ul.appendChild(li);
             });
             document.getElementById('relay-section').classList.remove('hidden');
@@ -307,9 +317,19 @@
             const ul = document.getElementById('relay-list');
             const i = ul.children.length;
             const li = document.createElement('li');
-            li.innerHTML = `<input type="text" value="wss://" data-idx="${i}" spellcheck="false"><button class="relay-rm" onclick="removeRelay(${i})">&times;</button>`;
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.value = 'wss://';
+            input.dataset.idx = i;
+            input.spellcheck = false;
+            const btn = document.createElement('button');
+            btn.className = 'relay-rm';
+            btn.textContent = '\u00d7';
+            btn.onclick = () => removeRelay(i);
+            li.appendChild(input);
+            li.appendChild(btn);
             ul.appendChild(li);
-            li.querySelector('input').focus();
+            input.focus();
         }
 
         function removeRelay(idx) {

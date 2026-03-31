@@ -86,7 +86,7 @@ const pool = new SimplePool()
 
 pool.subscribeMany(
   relays,
-  { kinds: [24133], '#p': [bunkerPk] },
+  [{ kinds: [24133], '#p': [bunkerPk] }],
   {
     onevent: async (event) => {
       try {
@@ -103,7 +103,7 @@ pool.subscribeMany(
 const relayParams = relays.map((r) => `relay=${encodeURIComponent(r)}`).join('&')
 const bunkerUri = `bunker://${bunkerPk}?${relayParams}`
 
-writeFileSync(`${DATA_DIR}/bunker-uri.txt`, bunkerUri)
+writeFileSync(`${DATA_DIR}/bunker-uri.txt`, bunkerUri, { mode: 0o600 })
 
 console.log(`Bunker started`)
 console.log(`  URI:     ${bunkerUri}`)
