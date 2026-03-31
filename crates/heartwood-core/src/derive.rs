@@ -2,8 +2,9 @@
 use hmac::{Hmac, Mac};
 use k256::schnorr::SigningKey;
 use sha2::Sha256;
+use zeroize::Zeroize;
 
-use crate::encoding::{encode_npub, encode_nsec};
+use crate::encoding::encode_npub;
 use crate::root::create_tree_root;
 use crate::types::{HeartwoodError, Identity, TreeRoot, DOMAIN_PREFIX, MAX_INDEX};
 use crate::validate::validate_purpose;
@@ -41,7 +42,7 @@ pub fn derive(root: &TreeRoot, purpose: &str, index: u32) -> Result<Identity, He
             .map_err(|e| HeartwoodError::Derivation(format!("HMAC init failed: {e}")))?;
         mac.update(&context);
         let result = mac.finalize();
-        let derived: [u8; 32] = result.into_bytes().into();
+        let mut derived: [u8; 32] = result.into_bytes().into();
 
         // Try to create a valid secp256k1 signing key
         match SigningKey::from_bytes(&derived) {
@@ -50,7 +51,6 @@ pub fn derive(root: &TreeRoot, purpose: &str, index: u32) -> Result<Identity, He
                 let public_key: [u8; 32] = verifying_key.to_bytes().into();
 
                 return Ok(Identity {
-                    nsec: encode_nsec(&derived),
                     npub: encode_npub(&public_key),
                     private_key: zeroize::Zeroizing::new(derived),
                     public_key,
@@ -59,6 +59,7 @@ pub fn derive(root: &TreeRoot, purpose: &str, index: u32) -> Result<Identity, He
                 });
             }
             Err(_) => {
+                derived.zeroize(); // don't leak failed attempt
                 // Invalid scalar (exceeds curve order), try next index
                 if current_index == MAX_INDEX {
                     return Err(HeartwoodError::IndexOverflow);
@@ -79,6 +80,6 @@ pub fn derive_from_identity(
     purpose: &str,
     index: u32,
 ) -> Result<Identity, HeartwoodError> {
-    let root = create_tree_root(*identity.private_key)?;
+    let root = create_tree_root(&identity.private_key)?;
     derive(&root, purpose, index)
 }

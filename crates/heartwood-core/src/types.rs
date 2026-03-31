@@ -63,7 +63,6 @@ impl TreeRoot {
 
 /// A derived child identity.
 pub struct Identity {
-    pub nsec: String,
     pub npub: String,
     pub private_key: zeroize::Zeroizing<[u8; 32]>,
     pub public_key: [u8; 32],
@@ -72,6 +71,11 @@ pub struct Identity {
 }
 
 impl Identity {
+    /// Compute the bech32-encoded nsec on demand (never stored in memory).
+    pub fn nsec(&self) -> String {
+        crate::encoding::encode_nsec(&self.private_key)
+    }
+
     /// Zero the private key bytes.
     pub fn zeroize(&mut self) {
         self.private_key.zeroize();

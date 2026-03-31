@@ -15,7 +15,7 @@ fn vector_4_mnemonic_social_index_0() {
     );
 
     let child = derive(&root, "social", 0).expect("derive must succeed");
-    assert_eq!(child.nsec, "nsec17rnusheefhuryyhpprnq5l3zvpzhg24xm9n7588amun6uedvdtyqnpcsm4");
+    assert_eq!(child.nsec(), "nsec17rnusheefhuryyhpprnq5l3zvpzhg24xm9n7588amun6uedvdtyqnpcsm4");
     assert_eq!(child.purpose, "social");
     assert_eq!(child.index, 0);
 }
