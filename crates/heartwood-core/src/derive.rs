@@ -80,6 +80,6 @@ pub fn derive_from_identity(
     purpose: &str,
     index: u32,
 ) -> Result<Identity, HeartwoodError> {
-    let root = create_tree_root(&identity.private_key)?;
+    let root = create_tree_root(&*identity.private_key)?;
     derive(&root, purpose, index)
 }
