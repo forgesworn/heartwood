@@ -789,6 +789,20 @@ async fn api_bunker() -> impl IntoResponse {
     }
 }
 
+/// `GET /api/bunker/status` — return relay connection status from the bunker sidecar.
+///
+/// The bunker sidecar writes `bunker-status.json` every 15 seconds with per-relay
+/// connection state. Returns an empty relays object if the file is missing.
+async fn api_bunker_status() -> impl IntoResponse {
+    match std::fs::read_to_string("/var/lib/heartwood/bunker-status.json") {
+        Ok(s) => match serde_json::from_str::<serde_json::Value>(&s) {
+            Ok(val) => axum::Json(val),
+            Err(_) => axum::Json(json!({"relays": {}})),
+        },
+        Err(_) => axum::Json(json!({"relays": {}})),
+    }
+}
+
 #[derive(Deserialize)]
 struct PasswordRequest {
     password: String,
@@ -919,6 +933,8 @@ struct ApproveClient {
     pubkey: String,
     #[serde(default)]
     allowed_kinds: Option<Vec<u64>>,
+    #[serde(default)]
+    label: Option<String>,
 }
 
 /// `POST /api/clients/approve` — approve a pending client pubkey.
@@ -936,6 +952,11 @@ async fn api_approve_client(axum::Json(req): axum::Json<ApproveClient>) -> impl 
     let mut entry = json!({ "approvedAt": chrono_now_iso() });
     if let Some(kinds) = &req.allowed_kinds {
         entry["allowedKinds"] = json!(kinds);
+    }
+    if let Some(label) = &req.label {
+        if !label.is_empty() {
+            entry["label"] = json!(label);
+        }
     }
     approved_obj.insert(req.pubkey.clone(), entry);
 
@@ -1034,6 +1055,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/reset", post(api_reset))
         .route("/api/relays", get(api_get_relays).post(api_set_relays))
         .route("/api/bunker", get(api_bunker))
+        .route("/api/bunker/status", get(api_bunker_status))
         .route("/api/password", post(api_set_password))
         .route("/api/tor", get(api_get_tor).post(api_set_tor))
         .route("/api/restart", post(api_restart))

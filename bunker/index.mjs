@@ -545,7 +545,41 @@ try {
   // File may not exist yet — that's fine
 }
 
-// --- 8. Clean shutdown ---
+// --- 8. Relay status reporting ---
+
+const STATUS_PATH = `${DATA_DIR}/bunker-status.json`
+
+async function writeRelayStatus() {
+  const status = {}
+  await Promise.all(
+    relays.map(async (url) => {
+      try {
+        const relay = await Promise.race([
+          pool.ensureRelay(url),
+          new Promise((_, reject) => setTimeout(() => reject(), 5000)),
+        ])
+        status[url] = relay.connected
+      } catch {
+        status[url] = false
+      }
+    }),
+  )
+  try {
+    writeFileSync(
+      STATUS_PATH,
+      JSON.stringify({ relays: status, ts: new Date().toISOString() }),
+      { mode: 0o644 },
+    )
+  } catch {
+    // Non-critical — status file is advisory
+  }
+}
+
+// Initial write after connections establish, then periodic
+setTimeout(writeRelayStatus, 3000)
+setInterval(writeRelayStatus, 15000)
+
+// --- 9. Clean shutdown ---
 
 function shutdown() {
   console.log('Shutting down...')
