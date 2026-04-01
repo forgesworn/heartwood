@@ -251,8 +251,8 @@ async function handleRequest(event) {
   let error
 
   // --- Client allowlist enforcement ---
-  // connect and ping are always allowed; all other methods require approval.
-  if (request.method !== 'connect' && request.method !== 'ping') {
+  // connect, ping, and get_public_key are always allowed; signing and other methods require approval.
+  if (request.method !== 'connect' && request.method !== 'ping' && request.method !== 'get_public_key') {
     if (!isApproved(clientPk)) {
       recordPending(clientPk)
       error = 'client not approved — ask the device owner to approve your pubkey'
@@ -276,8 +276,8 @@ async function handleRequest(event) {
   }
 
   // --- Rate limit enforcement ---
-  // connect and ping are exempt; all other methods are rate-limited.
-  if (request.method !== 'connect' && request.method !== 'ping') {
+  // connect, ping, and get_public_key are exempt; all other methods are rate-limited.
+  if (request.method !== 'connect' && request.method !== 'ping' && request.method !== 'get_public_key') {
     if (!checkRateLimit(clientPk)) {
       error = 'rate limit exceeded — try again shortly'
       console.log(`Rate-limited ${clientPk.slice(0, 12)}... (${request.method})`)
