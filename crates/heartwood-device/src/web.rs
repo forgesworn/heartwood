@@ -794,13 +794,12 @@ async fn api_bunker() -> impl IntoResponse {
 /// The bunker sidecar writes `bunker-status.json` every 15 seconds with per-relay
 /// connection state. Returns an empty relays object if the file is missing.
 async fn api_bunker_status() -> impl IntoResponse {
-    match std::fs::read_to_string("/var/lib/heartwood/bunker-status.json") {
-        Ok(s) => match serde_json::from_str::<serde_json::Value>(&s) {
-            Ok(val) => axum::Json(val),
-            Err(_) => axum::Json(json!({"relays": {}})),
-        },
-        Err(_) => axum::Json(json!({"relays": {}})),
-    }
+    let val = tokio::fs::read_to_string("/var/lib/heartwood/bunker-status.json")
+        .await
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .unwrap_or_else(|| json!({"relays": {}}));
+    axum::Json(val)
 }
 
 #[derive(Deserialize)]
