@@ -278,6 +278,7 @@ async fn api_setup(
 
     // Cache the decrypted payload so the device starts unlocked after setup
     drop(storage);
+    write_runtime_payload(&payload);
     *state.decrypted_payload.lock().await = Some(payload);
 
     info!("Setup complete (mode={}). Pubkey: {npub}", req.mode);
@@ -325,8 +326,9 @@ async fn api_reset(
     match storage.delete_master_secret() {
         Ok(()) => {
             drop(storage);
-            // Clear the cached decrypted payload
+            // Clear the cached decrypted payload and runtime file
             *state.decrypted_payload.lock().await = None;
+            remove_runtime_payload();
             info!("Device reset. Returning to setup mode.");
             (StatusCode::OK, axum::Json(json!({"status": "reset complete"})))
         }
@@ -341,6 +343,27 @@ async fn api_reset(
 }
 
 // --- PIN / lock management ---
+
+/// Runtime path for the decrypted payload (tmpfs on Linux, never hits disk).
+/// The bunker sidecar reads from here after PIN unlock.
+const RUNTIME_PAYLOAD_PATH: &str = "/run/heartwood/master.payload";
+
+/// Write the decrypted payload to the runtime path so the bunker sidecar can read it.
+fn write_runtime_payload(payload: &str) {
+    let dir = std::path::Path::new(RUNTIME_PAYLOAD_PATH).parent().unwrap();
+    if std::fs::create_dir_all(dir).is_err() {
+        tracing::warn!("Could not create runtime directory {}", dir.display());
+        return;
+    }
+    if let Err(e) = storage::write_secret_file(std::path::Path::new(RUNTIME_PAYLOAD_PATH), payload.as_bytes()) {
+        tracing::warn!("Could not write runtime payload: {e}");
+    }
+}
+
+/// Remove the runtime payload file (on lock or reset).
+fn remove_runtime_payload() {
+    let _ = std::fs::remove_file(RUNTIME_PAYLOAD_PATH);
+}
 
 /// Validate a PIN: must be 4–8 ASCII digits.
 fn validate_pin(pin: &str) -> bool {
@@ -382,6 +405,7 @@ async fn api_unlock(
     match storage::decrypt_with_pin(&req.pin, &bytes) {
         Ok(plaintext) => {
             let payload = String::from_utf8_lossy(&plaintext).to_string();
+            write_runtime_payload(&payload);
             *state.decrypted_payload.lock().await = Some(payload);
             info!("Device unlocked");
             (StatusCode::OK, axum::Json(json!({"status": "unlocked"})))
@@ -395,6 +419,7 @@ async fn api_unlock(
 /// `POST /api/lock` — clear the cached decrypted secret from memory.
 async fn api_lock(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     *state.decrypted_payload.lock().await = None;
+    remove_runtime_payload();
     info!("Device locked");
     axum::Json(json!({"status": "locked"}))
 }
@@ -444,6 +469,7 @@ async fn api_set_pin(
     // Cache the decrypted payload — device is now unlocked
     let payload = String::from_utf8_lossy(&bytes).to_string();
     drop(storage);
+    write_runtime_payload(&payload);
     *state.decrypted_payload.lock().await = Some(payload);
 
     info!("Legacy secret encrypted with PIN. Device unlocked.");
