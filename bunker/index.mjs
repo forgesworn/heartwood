@@ -121,18 +121,24 @@ function getActiveSigningKey() {
 
 // --- 2. Read relay list from config.json ---
 
-let relays = DEFAULT_RELAYS
 const configPath = `${DATA_DIR}/config.json`
-if (existsSync(configPath)) {
-  try {
-    const config = JSON.parse(readFileSync(configPath, 'utf-8'))
-    if (Array.isArray(config.relays) && config.relays.length > 0) {
-      relays = config.relays
+
+/** Read the current relay list from config.json, falling back to defaults. */
+function loadRelays() {
+  if (existsSync(configPath)) {
+    try {
+      const config = JSON.parse(readFileSync(configPath, 'utf-8'))
+      if (Array.isArray(config.relays) && config.relays.length > 0) {
+        return config.relays
+      }
+    } catch {
+      console.warn('WARN: could not parse config.json, using default relays')
     }
-  } catch {
-    console.warn('WARN: could not parse config.json, using default relays')
   }
+  return DEFAULT_RELAYS
 }
+
+let relays = loadRelays()
 
 // --- 2b. Client allowlist ---
 
@@ -251,26 +257,47 @@ const bunkerPk = getPublicKey(bunkerSk)
 
 const pool = new SimplePool()
 
-pool.subscribeMany(
-  relays,
-  { kinds: [24133], '#p': [bunkerPk] },
-  {
-    onevent: async (event) => {
-      try {
-        await handleRequest(event)
-      } catch (e) {
-        console.error(`Error handling request: ${e.message}`)
-      }
+/** Active subscription handle, tracked so we can close it on relay change. */
+let activeSub = null
+
+/** Build a bunker URI from the bunker pubkey and relay list. */
+function buildBunkerUri(relayList) {
+  const params = relayList.map((r) => `relay=${encodeURIComponent(r)}`).join('&')
+  return `bunker://${bunkerPk}?${params}`
+}
+
+/** Write the bunker URI file and subscribe to the given relays. */
+function connectRelays(relayList) {
+  // Close any existing subscription before reconnecting
+  if (activeSub) {
+    activeSub.close()
+    activeSub = null
+  }
+
+  activeSub = pool.subscribeMany(
+    relayList,
+    { kinds: [24133], '#p': [bunkerPk] },
+    {
+      onevent: async (event) => {
+        try {
+          await handleRequest(event)
+        } catch (e) {
+          console.error(`Error handling request: ${e.message}`)
+        }
+      },
     },
-  },
-)
+  )
 
-// --- 5. Write bunker URI ---
+  // Recompute and persist the bunker URI
+  const bunkerUri = buildBunkerUri(relayList)
+  writeFileSync(`${DATA_DIR}/bunker-uri.txt`, bunkerUri, { mode: 0o600 })
 
-const relayParams = relays.map((r) => `relay=${encodeURIComponent(r)}`).join('&')
-const bunkerUri = `bunker://${bunkerPk}?${relayParams}`
+  return bunkerUri
+}
 
-writeFileSync(`${DATA_DIR}/bunker-uri.txt`, bunkerUri, { mode: 0o600 })
+// --- 5. Write bunker URI and start initial subscription ---
+
+const bunkerUri = connectRelays(relays)
 
 console.log(`Bunker started`)
 console.log(`  URI:     ${bunkerUri}`)
@@ -475,7 +502,7 @@ async function handleRequest(event) {
   console.log(`Response ${request.id}: ${error ?? 'ok'}`)
 }
 
-// --- 7. Reload client list on file change ---
+// --- 7. Reload config on file changes ---
 
 import { watch } from 'node:fs'
 
@@ -488,6 +515,34 @@ try {
   })
 } catch {
   // File may not exist yet — that's fine, we'll pick up changes on next restart
+}
+
+// Watch config.json so the bunker picks up relay changes from the web UI.
+// When relays change, recompute the bunker URI and reconnect subscriptions.
+try {
+  let configDebounce = null
+  watch(configPath, () => {
+    // Debounce rapid successive writes (editors and atomic saves can trigger multiple events)
+    if (configDebounce) clearTimeout(configDebounce)
+    configDebounce = setTimeout(() => {
+      configDebounce = null
+      const newRelays = loadRelays()
+      // Only reconnect if the relay list actually changed
+      const changed =
+        newRelays.length !== relays.length || newRelays.some((r, i) => r !== relays[i])
+      if (!changed) return
+
+      const oldRelays = relays
+      relays = newRelays
+      const newUri = connectRelays(relays)
+      console.log(`Relay list changed — reconnected`)
+      console.log(`  Old: ${oldRelays.join(', ')}`)
+      console.log(`  New: ${relays.join(', ')}`)
+      console.log(`  URI: ${newUri}`)
+    }, 250)
+  })
+} catch {
+  // File may not exist yet — that's fine
 }
 
 // --- 8. Clean shutdown ---

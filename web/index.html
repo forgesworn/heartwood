@@ -493,6 +493,8 @@
                     msgEl.textContent = 'Saved';
                     msgEl.className = 'msg msg-ok';
                     setTimeout(() => msgEl.className = 'hidden', 2000);
+                    // Refresh the bunker URI — the device rewrites it with the new relays
+                    refreshBunkerUri();
                 } else {
                     msgEl.textContent = data.error;
                     msgEl.className = 'msg msg-err';
@@ -501,6 +503,18 @@
                 msgEl.textContent = 'Connection failed';
                 msgEl.className = 'msg msg-err';
             }
+        }
+
+        /** Re-fetch the bunker URI from the device and update the display. */
+        async function refreshBunkerUri() {
+            try {
+                const res = await fetch('/api/bunker');
+                const data = await res.json();
+                if (data.uri) {
+                    document.getElementById('bunker-uri').textContent = data.uri;
+                    document.getElementById('bunker-uri-section').classList.remove('hidden');
+                }
+            } catch { /* ignore — URI will refresh on next full page load */ }
         }
 
         // --- Bunker URI ---
