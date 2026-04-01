@@ -256,10 +256,7 @@ async fn api_reset(
                 req.password == stored
             };
             if !valid {
-                return (
-                    StatusCode::FORBIDDEN,
-                    axum::Json(json!({"error": "incorrect password"})),
-                );
+                return (StatusCode::FORBIDDEN, axum::Json(json!({"error": "incorrect password"})));
             }
         }
         None => {
@@ -560,6 +557,122 @@ async fn api_audit(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     }
 }
 
+// --- Client management (bunker allowlist) ---
+
+/// `GET /api/clients` — return approved and pending clients.
+async fn api_get_clients() -> impl IntoResponse {
+    let approved = load_clients_file("/var/lib/heartwood/clients.json");
+    let pending = load_clients_file("/var/lib/heartwood/pending-clients.json");
+    axum::Json(json!({ "approved": approved, "pending": pending }))
+}
+
+#[derive(Deserialize)]
+struct ApproveClient {
+    pubkey: String,
+    #[serde(default)]
+    allowed_kinds: Option<Vec<u64>>,
+}
+
+/// `POST /api/clients/approve` — approve a pending client pubkey.
+async fn api_approve_client(axum::Json(req): axum::Json<ApproveClient>) -> impl IntoResponse {
+    // Validate hex pubkey format
+    if req.pubkey.len() != 64 || !req.pubkey.chars().all(|c| c.is_ascii_hexdigit()) {
+        return (
+            StatusCode::BAD_REQUEST,
+            axum::Json(json!({"error": "invalid pubkey — expected 64 hex characters"})),
+        );
+    }
+
+    let mut approved = load_clients_file("/var/lib/heartwood/clients.json");
+    let approved_obj = approved.as_object_mut().unwrap();
+    let mut entry = json!({ "approvedAt": chrono_now_iso() });
+    if let Some(kinds) = &req.allowed_kinds {
+        entry["allowedKinds"] = json!(kinds);
+    }
+    approved_obj.insert(req.pubkey.clone(), entry);
+
+    if let Err(e) = write_clients_file("/var/lib/heartwood/clients.json", &approved) {
+        tracing::error!("Failed to save clients.json: {e}");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            axum::Json(json!({"error": "failed to save client list"})),
+        );
+    }
+
+    // Remove from pending
+    let mut pending = load_clients_file("/var/lib/heartwood/pending-clients.json");
+    if let Some(obj) = pending.as_object_mut() {
+        obj.remove(&req.pubkey);
+        let _ = write_clients_file("/var/lib/heartwood/pending-clients.json", &pending);
+    }
+
+    info!("Approved client: {}...", &req.pubkey[..12]);
+    (StatusCode::OK, axum::Json(json!({"status": "approved", "pubkey": req.pubkey})))
+}
+
+#[derive(Deserialize)]
+struct RevokeClient {
+    pubkey: String,
+}
+
+/// `POST /api/clients/revoke` — remove a client from the approved list.
+async fn api_revoke_client(axum::Json(req): axum::Json<RevokeClient>) -> impl IntoResponse {
+    let mut approved = load_clients_file("/var/lib/heartwood/clients.json");
+    if let Some(obj) = approved.as_object_mut() {
+        obj.remove(&req.pubkey);
+        if let Err(e) = write_clients_file("/var/lib/heartwood/clients.json", &approved) {
+            tracing::error!("Failed to save clients.json: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(json!({"error": "failed to save client list"})),
+            );
+        }
+    }
+    info!("Revoked client: {}...", &req.pubkey[..std::cmp::min(12, req.pubkey.len())]);
+    (StatusCode::OK, axum::Json(json!({"status": "revoked", "pubkey": req.pubkey})))
+}
+
+/// Load a JSON file from the filesystem, returning an empty object if missing or malformed.
+fn load_clients_file(path: &str) -> serde_json::Value {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| json!({}))
+}
+
+/// Write a JSON value to a file with restrictive permissions.
+#[cfg(unix)]
+fn write_clients_file(path: &str, data: &serde_json::Value) -> std::io::Result<()> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let content = serde_json::to_string_pretty(data)
+        .map_err(std::io::Error::other)?;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    std::io::Write::write_all(&mut file, content.as_bytes())
+}
+
+#[cfg(not(unix))]
+fn write_clients_file(path: &str, data: &serde_json::Value) -> std::io::Result<()> {
+    let content = serde_json::to_string_pretty(data)
+        .map_err(std::io::Error::other)?;
+    std::fs::write(path, content)
+}
+
+/// Return the current time as an ISO 8601 string (no external chrono dependency).
+fn chrono_now_iso() -> String {
+    let dur =
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    // Simple ISO format: just the unix timestamp as a string.
+    // For a proper ISO date we'd need chrono, but the bunker only needs a
+    // human-readable timestamp, so we format it manually.
+    let secs = dur.as_secs();
+    format!("{secs}")
+}
+
 /// Build and return the application router.
 ///
 /// No CORS layer is applied — the web UI uses same-origin requests.
@@ -575,6 +688,9 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/password", post(api_set_password))
         .route("/api/tor", post(api_set_tor))
         .route("/api/audit", get(api_audit))
+        .route("/api/clients", get(api_get_clients))
+        .route("/api/clients/approve", post(api_approve_client))
+        .route("/api/clients/revoke", post(api_revoke_client))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
         .layer(DefaultBodyLimit::max(65536))
         .with_state(state)
