@@ -1,7 +1,6 @@
 // crates/heartwood-nip46/src/server.rs
 //! Heartwood NIP-46 server state and request dispatcher.
 
-use std::collections::HashSet;
 use std::sync::Mutex;
 
 use heartwood_core::{
@@ -578,7 +577,7 @@ impl HeartwoodServer {
     /// It should not be called in production code.
     #[doc(hidden)]
     pub fn grant_all_permissions(&mut self, client_pubkey: &str) {
-        let privileged: HashSet<String> = [
+        let privileged: std::collections::HashSet<String> = [
             "heartwood_derive",
             "heartwood_derive_persona",
             "heartwood_switch",
