@@ -505,24 +505,41 @@
 
         // --- Bunker URI ---
 
+        function copyToClipboard(text, btn) {
+            // navigator.clipboard requires HTTPS or localhost — fall back to execCommand
+            if (navigator.clipboard && window.isSecureContext) {
+                navigator.clipboard.writeText(text).then(() => showCopied(btn));
+            } else {
+                const ta = document.createElement('textarea');
+                ta.value = text;
+                ta.style.position = 'fixed';
+                ta.style.left = '-9999px';
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+                showCopied(btn);
+            }
+        }
+
+        function showCopied(btn) {
+            btn.textContent = 'Copied!';
+            btn.style.borderColor = '#1a6b35';
+            setTimeout(() => { btn.textContent = 'Copy'; btn.style.borderColor = '#444'; }, 2000);
+        }
+
         function copyOnion() {
-            const addr = document.getElementById('onion-address').textContent;
-            navigator.clipboard.writeText(addr).then(() => {
-                const btn = document.getElementById('copy-onion-btn');
-                btn.textContent = 'Copied!';
-                btn.style.borderColor = '#1a6b35';
-                setTimeout(() => { btn.textContent = 'Copy'; btn.style.borderColor = '#444'; }, 2000);
-            });
+            copyToClipboard(
+                document.getElementById('onion-address').textContent,
+                document.getElementById('copy-onion-btn')
+            );
         }
 
         function copyBunkerUri() {
-            const uri = document.getElementById('bunker-uri').textContent;
-            navigator.clipboard.writeText(uri).then(() => {
-                const btn = document.getElementById('copy-btn');
-                btn.textContent = 'Copied!';
-                btn.style.borderColor = '#1a6b35';
-                setTimeout(() => { btn.textContent = 'Copy'; btn.style.borderColor = '#444'; }, 2000);
-            });
+            copyToClipboard(
+                document.getElementById('bunker-uri').textContent,
+                document.getElementById('copy-btn')
+            );
         }
 
         // --- Tor ---
