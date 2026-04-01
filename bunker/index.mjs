@@ -518,6 +518,16 @@ try {
   // File may not exist yet — that's fine, we'll pick up changes on next restart
 }
 
+// Watch pending-clients.json so clears from the web UI take effect immediately.
+try {
+  watch(pendingClientsPath, () => {
+    pendingClients = loadJson(pendingClientsPath, {})
+    console.log(`Reloaded pending clients (${Object.keys(pendingClients).length} pending)`)
+  })
+} catch {
+  // File may not exist yet
+}
+
 // Watch config.json so the bunker picks up relay changes from the web UI.
 // When relays change, recompute the bunker URI and reconnect subscriptions.
 try {
