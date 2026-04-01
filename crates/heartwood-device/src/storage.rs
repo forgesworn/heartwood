@@ -9,6 +9,103 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use aes_gcm::aead::Aead;
+use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
+use argon2::Argon2;
+use rand_core::{OsRng, RngCore};
+use zeroize::Zeroizing;
+
+// --- Encryption at rest (AES-256-GCM + Argon2id) ---
+
+const ENCRYPTION_V1: u8 = 0x01;
+const SALT_LEN: usize = 16;
+const NONCE_LEN: usize = 12;
+const KEY_LEN: usize = 32;
+/// Minimum blob size: version (1) + salt (16) + nonce (12) + GCM tag (16) = 45
+const MIN_ENCRYPTED_LEN: usize = 1 + SALT_LEN + NONCE_LEN + 16;
+
+/// Encryption error — wrong PIN or corrupt/truncated blob.
+#[derive(Debug)]
+pub enum EncryptionError {
+    InvalidFormat,
+    DecryptionFailed,
+}
+
+impl std::fmt::Display for EncryptionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidFormat => write!(f, "invalid encrypted format"),
+            Self::DecryptionFailed => write!(f, "decryption failed (wrong PIN?)"),
+        }
+    }
+}
+
+impl std::error::Error for EncryptionError {}
+
+/// Derive a 256-bit key from a PIN and salt using Argon2id.
+///
+/// Uses the default Argon2id parameters (m=19456 KiB, t=2, p=1) which are
+/// reasonable for a Raspberry Pi Zero 2 W with 512 MB RAM.
+fn derive_key(pin: &str, salt: &[u8]) -> Zeroizing<[u8; KEY_LEN]> {
+    let mut key = Zeroizing::new([0u8; KEY_LEN]);
+    Argon2::default()
+        .hash_password_into(pin.as_bytes(), salt, key.as_mut())
+        .expect("Argon2id key derivation failed");
+    key
+}
+
+/// Encrypt plaintext with AES-256-GCM keyed from a PIN via Argon2id.
+///
+/// On-disk format: `[version 1B][salt 16B][nonce 12B][ciphertext + GCM tag]`
+pub fn encrypt_with_pin(pin: &str, plaintext: &[u8]) -> Vec<u8> {
+    let mut salt = [0u8; SALT_LEN];
+    OsRng.fill_bytes(&mut salt);
+    let mut nonce_bytes = [0u8; NONCE_LEN];
+    OsRng.fill_bytes(&mut nonce_bytes);
+
+    let key = derive_key(pin, &salt);
+    let cipher = Aes256Gcm::new_from_slice(key.as_ref()).expect("key length mismatch");
+    let nonce = Nonce::from_slice(&nonce_bytes);
+    let ciphertext = cipher.encrypt(nonce, plaintext).expect("AES-GCM encryption failed");
+
+    let mut blob = Vec::with_capacity(1 + SALT_LEN + NONCE_LEN + ciphertext.len());
+    blob.push(ENCRYPTION_V1);
+    blob.extend_from_slice(&salt);
+    blob.extend_from_slice(&nonce_bytes);
+    blob.extend_from_slice(&ciphertext);
+    blob
+}
+
+/// Decrypt a blob produced by [`encrypt_with_pin`].
+///
+/// Returns the plaintext on success, or an error if the PIN is wrong or the
+/// blob is corrupt/truncated.
+pub fn decrypt_with_pin(pin: &str, blob: &[u8]) -> Result<Vec<u8>, EncryptionError> {
+    if blob.len() < MIN_ENCRYPTED_LEN {
+        return Err(EncryptionError::InvalidFormat);
+    }
+    if blob[0] != ENCRYPTION_V1 {
+        return Err(EncryptionError::InvalidFormat);
+    }
+
+    let salt = &blob[1..1 + SALT_LEN];
+    let nonce_bytes = &blob[1 + SALT_LEN..1 + SALT_LEN + NONCE_LEN];
+    let ciphertext = &blob[1 + SALT_LEN + NONCE_LEN..];
+
+    let key = derive_key(pin, salt);
+    let cipher = Aes256Gcm::new_from_slice(key.as_ref()).expect("key length mismatch");
+    let nonce = Nonce::from_slice(nonce_bytes);
+    cipher.decrypt(nonce, ciphertext).map_err(|_| EncryptionError::DecryptionFailed)
+}
+
+/// Returns `true` if the data looks like an encrypted blob (starts with version byte).
+///
+/// Plaintext legacy files start with ASCII text (`bunker:`, `tree-mnemonic:`, `tree-nsec:`),
+/// so checking the first byte against the version marker is sufficient.
+pub fn is_encrypted(data: &[u8]) -> bool {
+    data.first() == Some(&ENCRYPTION_V1) && data.len() >= MIN_ENCRYPTED_LEN
+}
+
 /// Filesystem-backed storage for secrets and configuration.
 ///
 /// Secrets are stored as raw bytes; callers are responsible for
@@ -116,4 +213,94 @@ fn write_secret_file(path: &Path, data: &[u8]) -> io::Result<()> {
 #[cfg(not(unix))]
 fn write_secret_file(path: &Path, data: &[u8]) -> io::Result<()> {
     fs::write(path, data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn encrypt_decrypt_round_trip() {
+        let pin = "1234";
+        let plaintext = b"bunker:nsec1abc123";
+        let blob = encrypt_with_pin(pin, plaintext);
+        let decrypted = decrypt_with_pin(pin, &blob).expect("decryption failed");
+        assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    fn wrong_pin_fails() {
+        let blob = encrypt_with_pin("1234", b"secret data");
+        let result = decrypt_with_pin("9999", &blob);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn truncated_blob_fails() {
+        let result = decrypt_with_pin("1234", &[ENCRYPTION_V1, 0, 0]);
+        assert!(matches!(result, Err(EncryptionError::InvalidFormat)));
+    }
+
+    #[test]
+    fn wrong_version_byte_fails() {
+        let mut blob = encrypt_with_pin("1234", b"data");
+        blob[0] = 0xFF;
+        let result = decrypt_with_pin("1234", &blob);
+        assert!(matches!(result, Err(EncryptionError::InvalidFormat)));
+    }
+
+    #[test]
+    fn is_encrypted_detects_encrypted_blob() {
+        let blob = encrypt_with_pin("5678", b"tree-nsec:nsec1xyz");
+        assert!(is_encrypted(&blob));
+    }
+
+    #[test]
+    fn is_encrypted_rejects_plaintext() {
+        assert!(!is_encrypted(b"bunker:nsec1abc123"));
+        assert!(!is_encrypted(b"tree-mnemonic::abandon ability"));
+        assert!(!is_encrypted(b"tree-nsec:nsec1xyz"));
+    }
+
+    #[test]
+    fn is_encrypted_rejects_empty() {
+        assert!(!is_encrypted(&[]));
+    }
+
+    #[test]
+    fn different_encryptions_produce_different_blobs() {
+        let pin = "4321";
+        let plaintext = b"same data";
+        let blob1 = encrypt_with_pin(pin, plaintext);
+        let blob2 = encrypt_with_pin(pin, plaintext);
+        // Different random salt and nonce each time
+        assert_ne!(blob1, blob2);
+        // But both decrypt to the same plaintext
+        assert_eq!(decrypt_with_pin(pin, &blob1).unwrap(), plaintext);
+        assert_eq!(decrypt_with_pin(pin, &blob2).unwrap(), plaintext);
+    }
+
+    #[test]
+    fn storage_round_trip() {
+        let dir = std::env::temp_dir().join(format!("heartwood-test-{}", std::process::id()));
+        let storage = Storage::new(Some(dir.clone()));
+
+        let pin = "5555";
+        let payload = b"bunker:nsec1testkey";
+        let encrypted = encrypt_with_pin(pin, payload);
+
+        storage.save_master_secret(&encrypted).unwrap();
+        assert!(storage.has_master_secret());
+
+        let loaded = storage.load_master_secret().unwrap();
+        assert!(is_encrypted(&loaded));
+
+        let decrypted = decrypt_with_pin(pin, &loaded).unwrap();
+        assert_eq!(decrypted, payload);
+
+        storage.delete_master_secret().unwrap();
+        assert!(!storage.has_master_secret());
+
+        let _ = fs::remove_dir_all(dir);
+    }
 }

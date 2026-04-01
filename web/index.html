@@ -49,6 +49,14 @@
         .warn { font-size: 0.78rem; opacity: 0.4; margin-top: 0.75rem; text-align: center; }
         .hidden { display: none; }
 
+        /* PIN / lock screen */
+        .pin-screen { text-align: center; }
+        .pin-screen h2 { font-size: 1.3rem; margin-bottom: 0.5rem; }
+        .pin-screen p { font-size: 0.85rem; opacity: 0.5; margin-bottom: 1.2rem; line-height: 1.5; }
+        .pin-input { width: 12rem; padding: 0.75rem; background: #111; border: 1px solid #333; border-radius: 6px; color: #e0e0e0; font-family: monospace; font-size: 1.5rem; text-align: center; letter-spacing: 0.5rem; }
+        .pin-input:focus { outline: none; border-color: #555; }
+        .pin-row { display: flex; gap: 0.75rem; justify-content: center; margin-bottom: 0.75rem; }
+
         /* Toggle */
         .toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 0.6rem 0; }
         .toggle-row label { opacity: 1; margin: 0; font-size: 0.9rem; }
@@ -82,6 +90,30 @@
         <h1>Heartwood</h1>
         <p class="subtitle">Nostr signing appliance</p>
         <div class="status-bar" id="status">Loading...</div>
+
+        <!-- LOCKED — enter PIN to unlock -->
+        <div id="locked" class="pin-screen hidden">
+            <h2>Device Locked</h2>
+            <p>Enter your PIN to unlock the master secret.</p>
+            <div class="pin-row">
+                <input type="password" class="pin-input" id="unlock-pin" maxlength="8" inputmode="numeric" pattern="[0-9]*" placeholder="PIN" autocomplete="off">
+            </div>
+            <button class="btn btn-primary" style="max-width:12rem; margin:0 auto;" onclick="doUnlock()">Unlock</button>
+        </div>
+
+        <!-- ENCRYPTION REQUIRED — legacy plaintext migration -->
+        <div id="encrypt-required" class="pin-screen hidden">
+            <h2>Encryption Required</h2>
+            <p>Your master secret is stored without encryption. Set a PIN to protect it with AES-256-GCM.</p>
+            <div class="pin-row">
+                <input type="password" class="pin-input" id="setpin-pin" maxlength="8" inputmode="numeric" pattern="[0-9]*" placeholder="PIN" autocomplete="off">
+            </div>
+            <div class="pin-row">
+                <input type="password" class="pin-input" id="setpin-confirm" maxlength="8" inputmode="numeric" pattern="[0-9]*" placeholder="Confirm" autocomplete="off">
+            </div>
+            <button class="btn btn-primary" style="max-width:12rem; margin:0 auto;" onclick="doSetPin()">Encrypt</button>
+            <p class="warn">Choose 4–8 digits. This PIN encrypts the master secret on disk. If you forget it, you must reset the device.</p>
+        </div>
 
         <!-- SETUP MODE -->
         <div id="setup" class="hidden">
@@ -128,8 +160,20 @@
                 </div>
             </div>
 
+            <!-- PIN for encryption at rest -->
+            <div class="fields">
+                <div class="field">
+                    <label>Device PIN (4–8 digits) — encrypts the secret on disk</label>
+                    <input type="password" id="setup-pin" maxlength="8" inputmode="numeric" pattern="[0-9]*" placeholder="PIN" autocomplete="off" style="font-size:1.1rem; letter-spacing:0.3rem; text-align:center;">
+                </div>
+                <div class="field">
+                    <label>Confirm PIN</label>
+                    <input type="password" id="setup-pin-confirm" maxlength="8" inputmode="numeric" pattern="[0-9]*" placeholder="Confirm" autocomplete="off" style="font-size:1.1rem; letter-spacing:0.3rem; text-align:center;">
+                </div>
+            </div>
+
             <button class="btn btn-primary" id="submit" onclick="doSetup()">Initialise</button>
-            <p class="warn">Your secret is stored on this device only. Ensure you are on a trusted local network.</p>
+            <p class="warn">Your secret is encrypted with your PIN and stored on this device only. If you forget the PIN, you must reset the device.</p>
         </div>
 
         <!-- CONFIGURED MODE -->
@@ -147,6 +191,7 @@
                 <p class="warn">Paste this into NostrHub, Amethyst, or any NIP-46 client to connect.</p>
             </div>
 
+            <button class="btn btn-primary" style="margin-bottom:0.5rem;" onclick="doLock()">Lock device</button>
             <button class="btn btn-danger" onclick="doReset()">Reset device</button>
             <p class="warn">Reset wipes the stored secret and returns to setup. Your key is not deleted from existence &mdash; only from this device.</p>
         </div>
@@ -226,7 +271,18 @@
             btn.textContent = 'Initialising...';
             document.getElementById('msg').className = 'hidden';
 
-            let body = { mode: currentMode };
+            const pin = document.getElementById('setup-pin').value;
+            const pinConfirm = document.getElementById('setup-pin-confirm').value;
+            if (!pin || pin.length < 4 || pin.length > 8 || !/^\d+$/.test(pin)) {
+                showMsg('PIN must be 4\u20138 digits', false);
+                btn.disabled = false; btn.textContent = 'Initialise'; return;
+            }
+            if (pin !== pinConfirm) {
+                showMsg('PINs do not match', false);
+                btn.disabled = false; btn.textContent = 'Initialise'; return;
+            }
+
+            let body = { mode: currentMode, pin: pin };
             if (currentMode === 'bunker') {
                 const nsec = document.getElementById('bunker-nsec').value.trim();
                 if (!nsec) { btn.disabled = false; btn.textContent = 'Initialise'; return; }
@@ -283,6 +339,65 @@
                     document.getElementById('msg').className = 'hidden';
                 } else {
                     showMsg('Reset failed: ' + data.error, false);
+                }
+            } catch (e) {
+                showMsg('Connection failed: ' + e.message, false);
+            }
+        }
+
+        async function doUnlock() {
+            const pin = document.getElementById('unlock-pin').value;
+            if (!pin) return;
+            document.getElementById('msg').className = 'hidden';
+            try {
+                const res = await fetch('/api/unlock', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pin }),
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    document.getElementById('unlock-pin').value = '';
+                    location.reload();
+                } else {
+                    showMsg(data.error || 'Unlock failed', false);
+                }
+            } catch (e) {
+                showMsg('Connection failed: ' + e.message, false);
+            }
+        }
+
+        async function doLock() {
+            try {
+                await fetch('/api/lock', { method: 'POST' });
+                location.reload();
+            } catch (e) {
+                showMsg('Connection failed: ' + e.message, false);
+            }
+        }
+
+        async function doSetPin() {
+            const pin = document.getElementById('setpin-pin').value;
+            const confirm = document.getElementById('setpin-confirm').value;
+            document.getElementById('msg').className = 'hidden';
+            if (!pin || pin.length < 4 || pin.length > 8 || !/^\d+$/.test(pin)) {
+                showMsg('PIN must be 4\u20138 digits', false); return;
+            }
+            if (pin !== confirm) {
+                showMsg('PINs do not match', false); return;
+            }
+            try {
+                const res = await fetch('/api/set-pin', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pin, confirm }),
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    showMsg('Secret encrypted. Device unlocked.', true);
+                    setTimeout(() => location.reload(), 1000);
+                } else {
+                    showMsg(data.error || 'Failed to set PIN', false);
                 }
             } catch (e) {
                 showMsg('Connection failed: ' + e.message, false);
@@ -541,24 +656,36 @@
             .then(d => {
                 document.getElementById('status').textContent =
                     'Status: ' + d.status + ' | v' + d.version;
+
                 if (d.setup_required) {
                     document.getElementById('setup').classList.remove('hidden');
+                } else if (d.encryption_required) {
+                    // Legacy plaintext secret — needs PIN to encrypt
+                    document.getElementById('encrypt-required').classList.remove('hidden');
+                } else if (d.locked) {
+                    // Encrypted but not yet unlocked
+                    document.getElementById('locked').classList.remove('hidden');
+                    document.getElementById('unlock-pin').focus();
                 } else {
+                    // Unlocked — show full UI
                     showConfigured(d.mode || 'unknown', d.npub || '(stored)');
                     if (d.bunker_uri) {
                         document.getElementById('bunker-uri').textContent = d.bunker_uri;
                         document.getElementById('bunker-uri-section').classList.remove('hidden');
                     }
                 }
-                if (d.relays) renderRelays(d.relays);
-                // Show config sections
-                document.getElementById('tor-section').classList.remove('hidden');
-                document.getElementById('tor-toggle').checked = !!d.tor_enabled;
-                document.getElementById('password-section').classList.remove('hidden');
-                if (d.has_password) {
-                    document.getElementById('pw-hint').textContent = 'Password is set. Enter a new one to change it.';
+
+                // Show config sections only when unlocked or in setup
+                if (!d.locked && !d.encryption_required) {
+                    if (d.relays) renderRelays(d.relays);
+                    document.getElementById('tor-section').classList.remove('hidden');
+                    document.getElementById('tor-toggle').checked = !!d.tor_enabled;
+                    document.getElementById('password-section').classList.remove('hidden');
+                    if (d.has_password) {
+                        document.getElementById('pw-hint').textContent = 'Password is set. Enter a new one to change it.';
+                    }
+                    loadClients();
                 }
-                loadClients();
             })
             .catch(() => {
                 document.getElementById('status').textContent = 'Connection failed';
