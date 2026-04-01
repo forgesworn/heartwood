@@ -1,147 +1,182 @@
-# Heartwood Developer Quickstart
+# Run Your Own Heartwood
 
-Heartwood is a Nostr signing appliance that runs on a Raspberry Pi. It holds your nsec on the device, serves a local web UI for configuration, and acts as a NIP-46 remote signer (bunker) so your private key never leaves the Pi.
+A step-by-step guide to running Heartwood on a Raspberry Pi. No programming experience needed.
 
-## Requirements
+## What you need
 
-- Raspberry Pi with 1 GB+ RAM (tested on Pi 5; any model running 64-bit OS works)
-- Raspberry Pi OS Bookworm (64-bit)
-- Rust toolchain (stable, via rustup)
-- Node.js >= 20
+- A **Raspberry Pi** (any model with WiFi — Pi 3, Pi 4, Pi Zero 2 W, Pi 5)
+- A **micro SD card** (8 GB or larger)
+- A **power supply** for your Pi
+- A **computer** on the same WiFi network (to access the web UI)
+- Your **Nostr nsec** (the private key you want Heartwood to protect)
 
-## Build
+## Step 1: Flash the SD card
 
-Install the Rust toolchain if you haven't already:
+1. Download [Raspberry Pi Imager](https://www.raspberrypi.com/software/) on your computer
+2. Insert the SD card into your computer
+3. Open Raspberry Pi Imager:
+   - **Operating System:** Raspberry Pi OS Lite (64-bit)
+   - **Storage:** your SD card
+   - Click the **gear icon** (or "Edit Settings") before writing:
+     - Set a **hostname** (e.g. `heartwood`)
+     - Enable **SSH** (use password authentication)
+     - Set a **username** (e.g. `satoshi`) and **password**
+     - Configure your **WiFi** network name and password
+   - Click **Write** and wait for it to finish
 
-```bash
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source "$HOME/.cargo/env"
-```
+4. Eject the SD card, put it in the Pi, and plug in power
+5. Wait 2–3 minutes for the Pi to boot and connect to WiFi
 
-Clone the repo and build:
+## Step 2: Connect to the Pi
 
-```bash
-git clone https://github.com/forgesworn/heartwood.git
-cd heartwood
-cargo build --release -p heartwood-device
-```
-
-Install the bunker sidecar dependencies:
-
-```bash
-cd bunker
-npm install
-```
-
-If you are cross-compiling from another machine, use `cross`:
+On your computer, open a terminal (Terminal on Mac, PowerShell on Windows):
 
 ```bash
-cargo install cross
-cross build --release --target aarch64-unknown-linux-gnu -p heartwood-device
+ssh satoshi@heartwood.local
 ```
 
-## Install
+Replace `satoshi` with the username you chose. Type `yes` when asked about the fingerprint, then enter your password.
 
-The quickest path is the setup script. Run it from the `pi/` directory on the Pi:
+If `heartwood.local` doesn't work, check your router's admin page for the Pi's IP address and use that instead:
 
 ```bash
-cd pi
-sudo bash setup.sh
+ssh satoshi@192.168.1.XXX
 ```
 
-This creates a `heartwood` system user, copies the binary to `/usr/local/bin/heartwood`, installs the systemd unit, and starts the service.
+## Step 3: Install Heartwood
 
-### Manual installation
-
-If you prefer to do it by hand:
+Run this one command on the Pi:
 
 ```bash
-# Create the heartwood user and data directory
-sudo useradd -r -s /usr/sbin/nologin heartwood
-sudo mkdir -p /var/lib/heartwood
-sudo chown heartwood:heartwood /var/lib/heartwood
-sudo chmod 700 /var/lib/heartwood
-
-# Copy the binary
-sudo cp target/release/heartwood-device /usr/local/bin/heartwood
-sudo chmod +x /usr/local/bin/heartwood
-
-# Install systemd units
-sudo cp pi/heartwood.service /etc/systemd/system/
-sudo cp pi/heartwood-bunker.service /etc/systemd/system/
-
-# Copy the bunker sidecar
-sudo mkdir -p /opt/heartwood/bunker
-sudo cp -r bunker/* /opt/heartwood/bunker/
-
-# Enable and start the web UI service
-sudo systemctl daemon-reload
-sudo systemctl enable heartwood
-sudo systemctl start heartwood
+curl -sL https://raw.githubusercontent.com/forgesworn/heartwood/main/pi/install.sh | sudo bash
 ```
 
-## Configure
+This downloads the latest release, installs Tor, creates the system service, and starts everything. It takes about 2 minutes.
 
-Open the web UI in a browser:
+When it finishes, you'll see your `.onion` address — save it somewhere. You can also find it later:
+
+```bash
+sudo cat /var/lib/tor/heartwood/hostname
+```
+
+## Step 4: Open the web UI
+
+On your computer, open a web browser and go to:
 
 ```
-http://<hostname>.local:3000
+http://heartwood.local:3000
 ```
 
-Replace `<hostname>` with your Pi's hostname (e.g. `heartwood.local:3000`).
+(or `http://192.168.1.XXX:3000` if you used an IP address)
 
-1. Select **Bunker** mode.
-2. Paste your nsec (starts with `nsec1...`).
-3. Review the relay list. Defaults are `wss://relay.damus.io`, `wss://relay.nostr.band`, `wss://nos.lol`, and `wss://relay.trotters.cc`. Add or remove relays as needed.
-4. Set a password to protect the web UI.
+You should see the Heartwood setup screen.
 
-## Start the Bunker
+## Step 5: Set up your key
 
-Enable and start the bunker sidecar:
+1. Select **Bunker** mode (recommended — keeps your existing npub)
+2. Paste your **nsec** into the text box
+3. Choose a **4–8 digit PIN** — this encrypts your key on the SD card
+4. Confirm the PIN
+5. Click **Initialise**
+
+Your npub will appear on screen. The nsec is now encrypted on the Pi with AES-256-GCM — you won't need to paste it again.
+
+## Step 6: Start the bunker
+
+The web UI handles configuration. Now enable the NIP-46 bunker sidecar:
 
 ```bash
 sudo systemctl enable heartwood-bunker
 sudo systemctl start heartwood-bunker
 ```
 
-The bunker writes a `bunker://` URI to `/var/lib/heartwood/bunker-uri.txt` on startup. You can also retrieve it from the web UI or the API:
+The bunker connects to Nostr relays and listens for signing requests.
+
+## Step 7: Connect from a Nostr client
+
+1. In the Heartwood web UI, find the **Bunker connection string** (starts with `bunker://...`)
+2. Click **Copy**
+3. Open your Nostr client (NostrHub, Amethyst, Damus, etc.)
+4. Look for "Login with bunker" or "NIP-46 / Nostr Connect"
+5. Paste the bunker connection string
+6. You should see your npub appear — you're signed in through Heartwood
+
+The Pi signs events on your behalf. Your nsec never leaves the device.
+
+## Step 8: Set a device password (recommended)
+
+In the web UI, scroll down to **Device Password** and set one. This protects the web UI with HTTP Basic Auth — anyone on your network would need the password to access settings.
+
+## Step 9: Access from anywhere (Tor)
+
+If Tor is enabled (check the toggle in the web UI), you can access Heartwood from anywhere using your `.onion` address. The address is shown in the web UI with a copy button.
+
+This works from any network — VPN, coffee shop WiFi, your phone on mobile data. You need [Tor Browser](https://www.torproject.org/download/) or a Tor-capable client.
+
+## Daily use
+
+- **When the Pi boots**, Heartwood starts automatically but is **locked**. Open the web UI and enter your PIN to unlock.
+- **When you're done**, click **Lock device** in the web UI. The decrypted key is cleared from memory.
+- **If you lose power**, the Pi boots locked. Your key is safe — it's encrypted on the SD card.
+- **If you forget your PIN**, you'll need to reset the device and set up again with your nsec.
+
+## Troubleshooting
+
+**Can't find the Pi on the network?**
+- Wait 2–3 minutes after plugging in — it takes time to boot and connect to WiFi
+- Try pinging it: `ping heartwood.local`
+- Check your router's admin page for connected devices
+- If you're on a VPN, disconnect first — VPNs hide local network devices
+
+**Web UI shows "Connection failed"?**
+- Make sure you're on the same WiFi as the Pi
+- Try the IP address directly: `http://192.168.1.XXX:3000`
+
+**Bunker not connecting from NostrHub?**
+- Make sure the Pi is unlocked (enter your PIN in the web UI first)
+- Check the bunker is running: `ssh satoshi@heartwood.local "sudo systemctl status heartwood-bunker"`
+- Try restarting: `ssh satoshi@heartwood.local "sudo systemctl restart heartwood-bunker"`
+
+**Forgot your PIN?**
+- SSH into the Pi and delete the encrypted secret, then set up again:
+  ```bash
+  ssh satoshi@heartwood.local "sudo rm /var/lib/heartwood/master.secret"
+  ```
+  Then refresh the web UI — you'll see the setup screen.
+
+## Developer quickstart
+
+If you want to build from source instead of using the installer:
 
 ```bash
-curl http://localhost:3000/api/bunker
+# Install Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+
+# Clone and build
+git clone https://github.com/forgesworn/heartwood.git
+cd heartwood
+cargo build --release -p heartwood-device
+
+# Install bunker dependencies
+cd bunker && npm install && cd ..
+
+# Run the setup script
+cd pi && sudo bash setup.sh
 ```
 
-## Connect a Client
-
-Copy the `bunker://` URI and paste it into any NIP-46 client:
-
-- **Amethyst** -- Settings > External Signer > Paste bunker URI
-- **NostrHub** -- Login > Remote signer > Paste URI
-- Any app that supports NIP-46 `bunker://` URIs
-
-The client sends signing requests to Nostr relays. The bunker decrypts them with NIP-44, signs with your nsec, and returns the signed event. Your private key stays on the Pi.
-
-## Verify
-
-Check both services are running:
+Cross-compile for Pi from another machine:
 
 ```bash
-sudo systemctl status heartwood
-sudo systemctl status heartwood-bunker
+cargo install cross
+cross build --release --target aarch64-unknown-linux-gnu -p heartwood-device
 ```
 
-Tail the logs:
+## Security notes
 
-```bash
-sudo journalctl -u heartwood -f
-sudo journalctl -u heartwood-bunker -f
-```
-
-The bunker logs each signing request and response. You should see `Request <id>: sign_event` entries when a client asks for a signature.
-
-## Security Notes
-
-- **Set a password.** Without one, anyone on your local network can access the web UI and your nsec.
-- **The nsec never leaves the device.** Only signatures and public keys are sent over relays. The bunker sidecar reads the nsec from `/var/lib/heartwood/master.secret` and holds it in memory; the file is mode 0700 and owned by the `heartwood` user.
-- **Systemd hardening is on by default.** Both services run with `ProtectSystem=strict`, `NoNewPrivileges=true`, `PrivateTmp=true`, and restricted capabilities.
-- **Consider Tor for remote access.** If you need to reach the web UI outside your LAN, configure a Tor hidden service rather than exposing port 3000 directly. See `pi/torrc` for the hidden service configuration.
-- **No client allowlist yet.** Any Nostr user can send signing requests to your bunker. This is acceptable for personal use but be aware of it.
+- **AES-256-GCM encryption at rest** — your nsec is encrypted with a key derived from your PIN via Argon2id. The PIN is never stored.
+- **The nsec never leaves the device** — only signatures and public keys are sent over relays.
+- **Systemd hardening** — both services run with `ProtectSystem=strict`, `NoNewPrivileges=true`, `PrivateTmp=true`, and restricted capabilities.
+- **Tor by default** — no port forwarding, no clearnet exposure, no IP address leaked.
+- **Per-client kind restrictions** — control what each paired app can sign.
+- **Device password** — protects the web UI with Argon2id-hashed HTTP Basic Auth.
