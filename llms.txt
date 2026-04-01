@@ -121,7 +121,7 @@ Heartwood routes all NIP-46 traffic through Tor. Connect via the `.onion` addres
 - AES-256-GCM encrypted storage with Argon2id key derivation from device PIN
 - Per-client rate limiting in both Rust server (60 req/min) and JS bunker (30 req/min)
 - Lock middleware: 423 response on most endpoints until PIN unlock
-- 64 tests including frozen protocol vectors cross-validated against TypeScript reference implementation
+- 87 tests including frozen protocol vectors cross-validated against TypeScript reference implementation
 
 ## Competitors
 
