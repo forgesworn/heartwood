@@ -274,7 +274,7 @@ function connectRelays(relayList) {
     activeSub = null
   }
 
-  activeSub = pool.subscribeMany(
+  activeSub = pool.subscribe(
     relayList,
     { kinds: [24133], '#p': [bunkerPk] },
     {
