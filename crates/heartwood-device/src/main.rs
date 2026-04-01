@@ -24,12 +24,15 @@ async fn main() {
         oled.show_text("SETUP MODE");
         info!("No master secret found. Entering setup mode.");
     } else {
-        info!("Master secret loaded.");
-        oled.show_text("READY");
+        info!("Master secret stored. Device locked until PIN is entered.");
+        oled.show_text("LOCKED");
     }
 
-    let state =
-        Arc::new(web::AppState { audit_log: Mutex::new(audit_log), storage: Mutex::new(storage) });
+    let state = Arc::new(web::AppState {
+        audit_log: Mutex::new(audit_log),
+        storage: Mutex::new(storage),
+        decrypted_payload: Mutex::new(None),
+    });
     let app = web::create_router(state);
 
     let bind_addr = std::env::var("HEARTWOOD_BIND").unwrap_or_else(|_| "0.0.0.0:3000".to_string());

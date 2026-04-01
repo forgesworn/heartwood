@@ -21,12 +21,16 @@ use password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use rand_core::OsRng;
 
 use crate::audit::AuditLog;
+use crate::storage;
 use crate::storage::Storage;
 
 /// Shared application state for all HTTP handlers.
 pub struct AppState {
     pub audit_log: Mutex<AuditLog>,
     pub storage: Mutex<Storage>,
+    /// Decrypted master secret payload, held in memory while unlocked.
+    /// `None` when locked or no secret exists.
+    pub decrypted_payload: Mutex<Option<String>>,
 }
 
 /// Serve the bundled `index.html`.
@@ -35,9 +39,40 @@ async fn serve_index() -> impl IntoResponse {
     (StatusCode::OK, [(header::CONTENT_TYPE, "text/html; charset=utf-8")], html)
 }
 
-/// `GET /api/status` — return device status including setup state.
+/// Parse a decrypted payload string into (mode, npub).
+fn parse_payload(payload: &str) -> (String, String) {
+    if let Some(nsec) = payload.strip_prefix("bunker:") {
+        let npub = heartwood_core::npub_from_nsec(nsec).unwrap_or_default();
+        ("bunker".to_string(), npub)
+    } else if let Some(rest) = payload.strip_prefix("tree-mnemonic:") {
+        // Format: "tree-mnemonic:{passphrase}:{mnemonic}" or "tree-mnemonic::{mnemonic}"
+        let (pass, mnemonic) = rest.split_once(':').unwrap_or(("", rest));
+        let pass = if pass.is_empty() { None } else { Some(pass) };
+        let npub = heartwood_core::from_mnemonic(mnemonic, pass)
+            .map(|r| {
+                let n = r.master_pubkey.clone();
+                r.destroy();
+                n
+            })
+            .unwrap_or_default();
+        ("tree-mnemonic".to_string(), npub)
+    } else if let Some(nsec) = payload.strip_prefix("tree-nsec:") {
+        let npub = heartwood_core::from_nsec(nsec)
+            .map(|r| {
+                let n = r.master_pubkey.clone();
+                r.destroy();
+                n
+            })
+            .unwrap_or_default();
+        ("tree-nsec".to_string(), npub)
+    } else {
+        ("unknown".to_string(), String::new())
+    }
+}
+
+/// `GET /api/status` — return device status including setup and lock state.
 ///
-/// When configured, also returns the mode and npub so the UI can display them.
+/// When configured and unlocked, also returns the mode and npub.
 async fn api_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let storage = state.storage.lock().await;
     let setup_required = !storage.has_master_secret();
@@ -59,40 +94,42 @@ async fn api_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         }));
     }
 
-    // Parse stored payload to extract mode and derive npub for display.
-    let (mode, npub) = match storage.load_master_secret() {
-        Ok(bytes) => {
-            let payload = String::from_utf8_lossy(&bytes);
-            if let Some(nsec) = payload.strip_prefix("bunker:") {
-                let npub = heartwood_core::npub_from_nsec(nsec).unwrap_or_default();
-                ("bunker".to_string(), npub)
-            } else if let Some(rest) = payload.strip_prefix("tree-mnemonic:") {
-                // Format: "tree-mnemonic:{passphrase}:{mnemonic}" or "tree-mnemonic::{mnemonic}"
-                let (pass, mnemonic) = rest.split_once(':').unwrap_or(("", rest));
-                let pass = if pass.is_empty() { None } else { Some(pass) };
-                let npub = heartwood_core::from_mnemonic(mnemonic, pass)
-                    .map(|r| {
-                        let n = r.master_pubkey.clone();
-                        r.destroy();
-                        n
-                    })
-                    .unwrap_or_default();
-                ("tree-mnemonic".to_string(), npub)
-            } else if let Some(nsec) = payload.strip_prefix("tree-nsec:") {
-                let npub = heartwood_core::from_nsec(nsec)
-                    .map(|r| {
-                        let n = r.master_pubkey.clone();
-                        r.destroy();
-                        n
-                    })
-                    .unwrap_or_default();
-                ("tree-nsec".to_string(), npub)
-            } else {
-                ("unknown".to_string(), String::new())
-            }
-        }
-        Err(_) => ("unknown".to_string(), String::new()),
+    // Check if the stored secret is encrypted or legacy plaintext
+    let encryption_required = match storage.load_master_secret() {
+        Ok(bytes) => !storage::is_encrypted(&bytes),
+        Err(_) => false,
     };
+    drop(storage);
+
+    if encryption_required {
+        return axum::Json(json!({
+            "status": "running",
+            "version": env!("CARGO_PKG_VERSION"),
+            "setup_required": false,
+            "encryption_required": true,
+            "has_password": has_password,
+            "tor_enabled": tor_enabled,
+            "relays": relays
+        }));
+    }
+
+    // Check lock state from cached decrypted payload
+    let payload_guard = state.decrypted_payload.lock().await;
+    let locked = payload_guard.is_none();
+
+    if locked {
+        return axum::Json(json!({
+            "status": "running",
+            "version": env!("CARGO_PKG_VERSION"),
+            "setup_required": false,
+            "locked": true,
+            "has_password": has_password,
+            "tor_enabled": tor_enabled,
+            "relays": relays
+        }));
+    }
+
+    let (mode, npub) = parse_payload(payload_guard.as_deref().unwrap_or(""));
 
     // Read bunker URI if available
     let bunker_uri = std::fs::read_to_string("/var/lib/heartwood/bunker-uri.txt")
@@ -103,6 +140,7 @@ async fn api_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         "status": "running",
         "version": env!("CARGO_PKG_VERSION"),
         "setup_required": false,
+        "locked": false,
         "has_password": has_password,
         "tor_enabled": tor_enabled,
         "mode": mode,
@@ -119,6 +157,8 @@ struct SetupRequest {
     mnemonic: Option<String>,
     passphrase: Option<String>,
     nsec: Option<String>,
+    /// 4–8 digit PIN used to encrypt the master secret at rest.
+    pin: String,
 }
 
 /// `POST /api/setup` — initialise the device. Only works in setup mode.
@@ -137,6 +177,17 @@ async fn api_setup(
         return (
             StatusCode::CONFLICT,
             axum::Json(json!({"error": "device already configured — reset first"})),
+        );
+    }
+
+    // Validate PIN: 4–8 digits
+    if req.pin.len() < 4
+        || req.pin.len() > 8
+        || !req.pin.chars().all(|c| c.is_ascii_digit())
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            axum::Json(json!({"error": "PIN must be 4–8 digits"})),
         );
     }
 
@@ -215,13 +266,19 @@ async fn api_setup(
         }
     };
 
-    if let Err(e) = storage.save_master_secret(payload.as_bytes()) {
+    // Encrypt the payload with the PIN before writing to disk
+    let encrypted = storage::encrypt_with_pin(&req.pin, payload.as_bytes());
+    if let Err(e) = storage.save_master_secret(&encrypted) {
         tracing::error!("Failed to save master secret: {e}");
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             axum::Json(json!({"error": "failed to save configuration"})),
         );
     }
+
+    // Cache the decrypted payload so the device starts unlocked after setup
+    drop(storage);
+    *state.decrypted_payload.lock().await = Some(payload);
 
     info!("Setup complete (mode={}). Pubkey: {npub}", req.mode);
     (StatusCode::OK, axum::Json(json!({"npub": npub, "mode": req.mode})))
@@ -267,6 +324,9 @@ async fn api_reset(
 
     match storage.delete_master_secret() {
         Ok(()) => {
+            drop(storage);
+            // Clear the cached decrypted payload
+            *state.decrypted_payload.lock().await = None;
             info!("Device reset. Returning to setup mode.");
             (StatusCode::OK, axum::Json(json!({"status": "reset complete"})))
         }
@@ -278,6 +338,152 @@ async fn api_reset(
             )
         }
     }
+}
+
+// --- PIN / lock management ---
+
+/// Validate a PIN: must be 4–8 ASCII digits.
+fn validate_pin(pin: &str) -> bool {
+    pin.len() >= 4 && pin.len() <= 8 && pin.chars().all(|c| c.is_ascii_digit())
+}
+
+#[derive(Deserialize)]
+struct UnlockRequest {
+    pin: String,
+}
+
+/// `POST /api/unlock` — decrypt the master secret and enter unlocked state.
+///
+/// The PIN is used to derive the AES-256-GCM key via Argon2id. If the PIN is
+/// wrong, authenticated decryption fails and the endpoint returns 403.
+async fn api_unlock(
+    State(state): State<Arc<AppState>>,
+    axum::Json(req): axum::Json<UnlockRequest>,
+) -> impl IntoResponse {
+    let storage = state.storage.lock().await;
+
+    if !storage.has_master_secret() {
+        return (StatusCode::BAD_REQUEST, axum::Json(json!({"error": "no secret stored — run setup first"})));
+    }
+
+    let bytes = match storage.load_master_secret() {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::error!("Failed to read master secret: {e}");
+            return (StatusCode::INTERNAL_SERVER_ERROR, axum::Json(json!({"error": "failed to read secret"})));
+        }
+    };
+    drop(storage);
+
+    if !storage::is_encrypted(&bytes) {
+        return (StatusCode::CONFLICT, axum::Json(json!({"error": "secret is not encrypted — use /api/set-pin first"})));
+    }
+
+    match storage::decrypt_with_pin(&req.pin, &bytes) {
+        Ok(plaintext) => {
+            let payload = String::from_utf8_lossy(&plaintext).to_string();
+            *state.decrypted_payload.lock().await = Some(payload);
+            info!("Device unlocked");
+            (StatusCode::OK, axum::Json(json!({"status": "unlocked"})))
+        }
+        Err(_) => {
+            (StatusCode::FORBIDDEN, axum::Json(json!({"error": "incorrect PIN"})))
+        }
+    }
+}
+
+/// `POST /api/lock` — clear the cached decrypted secret from memory.
+async fn api_lock(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    *state.decrypted_payload.lock().await = None;
+    info!("Device locked");
+    axum::Json(json!({"status": "locked"}))
+}
+
+#[derive(Deserialize)]
+struct SetPinRequest {
+    pin: String,
+    confirm: String,
+}
+
+/// `POST /api/set-pin` — encrypt a legacy plaintext secret with a new PIN.
+///
+/// Only works when the stored secret is unencrypted (legacy migration).
+/// After encryption, the device is left in unlocked state.
+async fn api_set_pin(
+    State(state): State<Arc<AppState>>,
+    axum::Json(req): axum::Json<SetPinRequest>,
+) -> impl IntoResponse {
+    if req.pin != req.confirm {
+        return (StatusCode::BAD_REQUEST, axum::Json(json!({"error": "PINs do not match"})));
+    }
+    if !validate_pin(&req.pin) {
+        return (StatusCode::BAD_REQUEST, axum::Json(json!({"error": "PIN must be 4–8 digits"})));
+    }
+
+    let storage = state.storage.lock().await;
+
+    let bytes = match storage.load_master_secret() {
+        Ok(b) => b,
+        Err(e) => {
+            tracing::error!("Failed to read master secret: {e}");
+            return (StatusCode::INTERNAL_SERVER_ERROR, axum::Json(json!({"error": "failed to read secret"})));
+        }
+    };
+
+    if storage::is_encrypted(&bytes) {
+        return (StatusCode::CONFLICT, axum::Json(json!({"error": "secret is already encrypted"})));
+    }
+
+    // Encrypt the plaintext payload with the new PIN
+    let encrypted = storage::encrypt_with_pin(&req.pin, &bytes);
+    if let Err(e) = storage.save_master_secret(&encrypted) {
+        tracing::error!("Failed to save encrypted secret: {e}");
+        return (StatusCode::INTERNAL_SERVER_ERROR, axum::Json(json!({"error": "failed to save encrypted secret"})));
+    }
+
+    // Cache the decrypted payload — device is now unlocked
+    let payload = String::from_utf8_lossy(&bytes).to_string();
+    drop(storage);
+    *state.decrypted_payload.lock().await = Some(payload);
+
+    info!("Legacy secret encrypted with PIN. Device unlocked.");
+    (StatusCode::OK, axum::Json(json!({"status": "encrypted and unlocked"})))
+}
+
+/// Middleware that blocks most API endpoints when the device is locked.
+///
+/// Allows: `/`, `/api/status`, `/api/unlock`, `/api/set-pin`, `/api/setup`.
+/// Everything else returns 423 Locked.
+async fn lock_middleware(
+    State(state): State<Arc<AppState>>,
+    req: Request,
+    next: Next,
+) -> impl IntoResponse {
+    let path = req.uri().path().to_string();
+
+    // These endpoints work regardless of lock state
+    let unlocked_paths = ["/", "/api/status", "/api/unlock", "/api/set-pin", "/api/setup"];
+    if unlocked_paths.contains(&path.as_str()) {
+        return next.run(req).await;
+    }
+
+    // Check if device is locked (has a secret but no cached decrypted payload)
+    let storage = state.storage.lock().await;
+    let has_secret = storage.has_master_secret();
+    drop(storage);
+
+    if has_secret {
+        let payload = state.decrypted_payload.lock().await;
+        if payload.is_none() {
+            return (
+                StatusCode::LOCKED,
+                axum::Json(json!({"error": "device is locked — POST to /api/unlock with your PIN"})),
+            )
+                .into_response();
+        }
+    }
+
+    next.run(req).await
 }
 
 // --- Config helpers ---
@@ -682,6 +888,9 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/", get(serve_index))
         .route("/api/status", get(api_status))
         .route("/api/setup", post(api_setup))
+        .route("/api/unlock", post(api_unlock))
+        .route("/api/lock", post(api_lock))
+        .route("/api/set-pin", post(api_set_pin))
         .route("/api/reset", post(api_reset))
         .route("/api/relays", get(api_get_relays).post(api_set_relays))
         .route("/api/bunker", get(api_bunker))
@@ -691,6 +900,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/clients", get(api_get_clients))
         .route("/api/clients/approve", post(api_approve_client))
         .route("/api/clients/revoke", post(api_revoke_client))
+        .layer(middleware::from_fn_with_state(state.clone(), lock_middleware))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
         .layer(DefaultBodyLimit::max(65536))
         .with_state(state)
