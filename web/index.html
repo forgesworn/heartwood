@@ -191,6 +191,15 @@
                 <p class="warn">Paste this into NostrHub, Amethyst, or any NIP-46 client to connect.</p>
             </div>
 
+            <div id="onion-section" class="hidden" style="margin-top:1.5rem;">
+                <p class="label">Tor address</p>
+                <div style="position:relative;">
+                    <div class="npub" id="onion-address" style="padding-right:3rem;"></div>
+                    <button onclick="copyOnion()" style="position:absolute; right:0.4rem; top:50%; transform:translateY(-50%); background:#2a2a2a; border:1px solid #444; border-radius:4px; color:#ccc; padding:0.3rem 0.5rem; cursor:pointer; font-size:0.75rem;" id="copy-onion-btn">Copy</button>
+                </div>
+                <p class="warn">Access this device from anywhere via Tor Browser or a .onion-capable client.</p>
+            </div>
+
             <button class="btn btn-primary" style="margin-bottom:0.5rem;" onclick="doLock()">Lock device</button>
             <button class="btn btn-danger" onclick="doReset()">Reset device</button>
             <p class="warn">Reset wipes the stored secret and returns to setup. Your key is not deleted from existence &mdash; only from this device.</p>
@@ -496,6 +505,16 @@
 
         // --- Bunker URI ---
 
+        function copyOnion() {
+            const addr = document.getElementById('onion-address').textContent;
+            navigator.clipboard.writeText(addr).then(() => {
+                const btn = document.getElementById('copy-onion-btn');
+                btn.textContent = 'Copied!';
+                btn.style.borderColor = '#1a6b35';
+                setTimeout(() => { btn.textContent = 'Copy'; btn.style.borderColor = '#444'; }, 2000);
+            });
+        }
+
         function copyBunkerUri() {
             const uri = document.getElementById('bunker-uri').textContent;
             navigator.clipboard.writeText(uri).then(() => {
@@ -519,9 +538,13 @@
                 });
                 const data = await res.json();
                 if (res.ok) {
-                    msgEl.textContent = enabled ? 'Tor enabled. Restart the device to apply.' : 'Tor disabled.';
-                    msgEl.className = 'msg msg-ok';
-                    setTimeout(() => msgEl.className = 'hidden', 3000);
+                    if (confirm(enabled ? 'Tor enabled. Restart now to apply?' : 'Tor disabled. Restart now to apply?')) {
+                        doRestart();
+                    } else {
+                        msgEl.textContent = 'Saved. Restart the device to apply.';
+                        msgEl.className = 'msg msg-ok';
+                        setTimeout(() => msgEl.className = 'hidden', 5000);
+                    }
                 } else {
                     msgEl.textContent = data.error;
                     msgEl.className = 'msg msg-err';
@@ -529,6 +552,19 @@
             } catch (e) {
                 msgEl.textContent = 'Connection failed';
                 msgEl.className = 'msg msg-err';
+            }
+        }
+
+        async function doRestart() {
+            try {
+                await fetch('/api/restart', { method: 'POST' });
+                document.getElementById('status').textContent = 'Restarting...';
+                // Poll until the server comes back
+                setTimeout(function poll() {
+                    fetch('/api/status').then(() => location.reload()).catch(() => setTimeout(poll, 2000));
+                }, 3000);
+            } catch (e) {
+                showMsg('Restart failed: ' + e.message, false);
             }
         }
 
@@ -672,6 +708,10 @@
                     if (d.bunker_uri) {
                         document.getElementById('bunker-uri').textContent = d.bunker_uri;
                         document.getElementById('bunker-uri-section').classList.remove('hidden');
+                    }
+                    if (d.onion_address) {
+                        document.getElementById('onion-address').textContent = d.onion_address;
+                        document.getElementById('onion-section').classList.remove('hidden');
                     }
                 }
 
