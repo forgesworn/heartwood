@@ -11,6 +11,7 @@ use serde::Serialize;
 
 const MAX_ENTRIES: usize = 1000;
 /// Maximum audit log file size before rotation (1 MiB).
+#[allow(dead_code)]
 const MAX_LOG_FILE_SIZE: u64 = 1_048_576;
 
 /// A single entry in the audit log.
@@ -37,6 +38,7 @@ pub struct AuditEntry {
 pub struct AuditLog {
     entries: VecDeque<AuditEntry>,
     /// Path to the on-disk audit log file, if disk persistence is enabled.
+    #[allow(dead_code)]
     log_path: Option<PathBuf>,
 }
 
@@ -58,6 +60,7 @@ impl AuditLog {
     ///
     /// If disk persistence is configured, the entry is also appended to the
     /// log file. Write failures are logged but do not prevent in-memory logging.
+    #[allow(dead_code)]
     pub fn log(&mut self, entry: AuditEntry) {
         if let Some(path) = &self.log_path {
             if let Err(e) = Self::append_to_file(path, &entry) {
@@ -76,6 +79,7 @@ impl AuditLog {
     }
 
     /// Return the `count` most-recent entries, oldest-first.
+    #[allow(dead_code)]
     pub fn recent(&self, count: usize) -> Vec<&AuditEntry> {
         self.entries.iter().rev().take(count).collect::<Vec<_>>().into_iter().rev().collect()
     }
