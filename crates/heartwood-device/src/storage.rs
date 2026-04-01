@@ -57,6 +57,7 @@ fn derive_key(pin: &str, salt: &[u8]) -> Zeroizing<[u8; KEY_LEN]> {
 /// Encrypt plaintext with AES-256-GCM keyed from a PIN via Argon2id.
 ///
 /// On-disk format: `[version 1B][salt 16B][nonce 12B][ciphertext + GCM tag]`
+#[allow(deprecated)] // Nonce::from_slice — aes-gcm 0.10 uses generic-array 0.x
 pub fn encrypt_with_pin(pin: &str, plaintext: &[u8]) -> Vec<u8> {
     let mut salt = [0u8; SALT_LEN];
     OsRng.fill_bytes(&mut salt);
@@ -80,6 +81,7 @@ pub fn encrypt_with_pin(pin: &str, plaintext: &[u8]) -> Vec<u8> {
 ///
 /// Returns the plaintext on success, or an error if the PIN is wrong or the
 /// blob is corrupt/truncated.
+#[allow(deprecated)] // Nonce::from_slice — aes-gcm 0.10 uses generic-array 0.x
 pub fn decrypt_with_pin(pin: &str, blob: &[u8]) -> Result<Vec<u8>, EncryptionError> {
     if blob.len() < MIN_ENCRYPTED_LEN {
         return Err(EncryptionError::InvalidFormat);
