@@ -16,6 +16,10 @@ use serde_json::json;
 use tokio::sync::Mutex;
 use tracing::info;
 
+use argon2::Argon2;
+use password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
+use rand_core::OsRng;
+
 use crate::audit::AuditLog;
 use crate::storage::Storage;
 
@@ -41,7 +45,8 @@ async fn api_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let relays = load_relays(&storage);
 
     let has_password = load_password(&storage).is_some();
-    let tor_enabled = load_config(&storage).get("tor_enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+    let tor_enabled =
+        load_config(&storage).get("tor_enabled").and_then(|v| v.as_bool()).unwrap_or(false);
 
     if setup_required {
         return axum::Json(json!({
@@ -66,12 +71,20 @@ async fn api_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
                 let (pass, mnemonic) = rest.split_once(':').unwrap_or(("", rest));
                 let pass = if pass.is_empty() { None } else { Some(pass) };
                 let npub = heartwood_core::from_mnemonic(mnemonic, pass)
-                    .map(|r| { let n = r.master_pubkey.clone(); r.destroy(); n })
+                    .map(|r| {
+                        let n = r.master_pubkey.clone();
+                        r.destroy();
+                        n
+                    })
                     .unwrap_or_default();
                 ("tree-mnemonic".to_string(), npub)
             } else if let Some(nsec) = payload.strip_prefix("tree-nsec:") {
                 let npub = heartwood_core::from_nsec(nsec)
-                    .map(|r| { let n = r.master_pubkey.clone(); r.destroy(); n })
+                    .map(|r| {
+                        let n = r.master_pubkey.clone();
+                        r.destroy();
+                        n
+                    })
                     .unwrap_or_default();
                 ("tree-nsec".to_string(), npub)
             } else {
@@ -131,26 +144,29 @@ async fn api_setup(
         "bunker" => {
             let nsec = match &req.nsec {
                 Some(n) => n,
-                None => return (
-                    StatusCode::BAD_REQUEST,
-                    axum::Json(json!({"error": "bunker mode requires 'nsec'"})),
-                ),
+                None => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        axum::Json(json!({"error": "bunker mode requires 'nsec'"})),
+                    )
+                }
             };
             match heartwood_core::npub_from_nsec(nsec) {
                 Ok(npub) => (npub, format!("bunker:{nsec}")),
-                Err(e) => return (
-                    StatusCode::BAD_REQUEST,
-                    axum::Json(json!({"error": format!("{e}")})),
-                ),
+                Err(e) => {
+                    return (StatusCode::BAD_REQUEST, axum::Json(json!({"error": format!("{e}")})))
+                }
             }
         }
         "tree-mnemonic" => {
             let mnemonic = match &req.mnemonic {
                 Some(m) => m,
-                None => return (
-                    StatusCode::BAD_REQUEST,
-                    axum::Json(json!({"error": "tree-mnemonic mode requires 'mnemonic'"})),
-                ),
+                None => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        axum::Json(json!({"error": "tree-mnemonic mode requires 'mnemonic'"})),
+                    )
+                }
             };
             match heartwood_core::from_mnemonic(mnemonic, req.passphrase.as_deref()) {
                 Ok(root) => {
@@ -163,19 +179,20 @@ async fn api_setup(
                     };
                     (npub, payload)
                 }
-                Err(e) => return (
-                    StatusCode::BAD_REQUEST,
-                    axum::Json(json!({"error": format!("{e}")})),
-                ),
+                Err(e) => {
+                    return (StatusCode::BAD_REQUEST, axum::Json(json!({"error": format!("{e}")})))
+                }
             }
         }
         "tree-nsec" => {
             let nsec = match &req.nsec {
                 Some(n) => n,
-                None => return (
-                    StatusCode::BAD_REQUEST,
-                    axum::Json(json!({"error": "tree-nsec mode requires 'nsec'"})),
-                ),
+                None => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        axum::Json(json!({"error": "tree-nsec mode requires 'nsec'"})),
+                    )
+                }
             };
             match heartwood_core::from_nsec(nsec) {
                 Ok(root) => {
@@ -183,16 +200,19 @@ async fn api_setup(
                     root.destroy();
                     (npub, format!("tree-nsec:{nsec}"))
                 }
-                Err(e) => return (
-                    StatusCode::BAD_REQUEST,
-                    axum::Json(json!({"error": format!("{e}")})),
-                ),
+                Err(e) => {
+                    return (StatusCode::BAD_REQUEST, axum::Json(json!({"error": format!("{e}")})))
+                }
             }
         }
-        _ => return (
-            StatusCode::BAD_REQUEST,
-            axum::Json(json!({"error": "mode must be 'bunker', 'tree-mnemonic', or 'tree-nsec'"})),
-        ),
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                axum::Json(
+                    json!({"error": "mode must be 'bunker', 'tree-mnemonic', or 'tree-nsec'"}),
+                ),
+            )
+        }
     };
 
     if let Err(e) = storage.save_master_secret(payload.as_bytes()) {
@@ -207,12 +227,44 @@ async fn api_setup(
     (StatusCode::OK, axum::Json(json!({"npub": npub, "mode": req.mode})))
 }
 
+#[derive(Deserialize)]
+struct ResetRequest {
+    password: String,
+}
+
 /// `POST /api/reset` — wipe stored secret and return to setup mode.
-async fn api_reset(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+///
+/// Requires the current device password in the POST body as a secondary
+/// confirmation, since this operation destroys the master secret.
+async fn api_reset(
+    State(state): State<Arc<AppState>>,
+    axum::Json(req): axum::Json<ResetRequest>,
+) -> impl IntoResponse {
     let storage = state.storage.lock().await;
+
     if !storage.has_master_secret() {
         return (StatusCode::OK, axum::Json(json!({"status": "already in setup mode"})));
     }
+
+    // Verify password before allowing reset
+    let stored = load_password(&storage);
+    match stored {
+        Some(stored) => {
+            let valid = if is_hashed(&stored) {
+                verify_password(&req.password, &stored)
+            } else {
+                req.password == stored
+            };
+            if !valid {
+                return (StatusCode::FORBIDDEN, axum::Json(json!({"error": "incorrect password"})));
+            }
+        }
+        None => {
+            // No password set — should not happen in practice since auth_middleware
+            // would allow unauthenticated access, but handle gracefully.
+        }
+    }
+
     match storage.delete_master_secret() {
         Ok(()) => {
             info!("Device reset. Returning to setup mode.");
@@ -254,7 +306,29 @@ fn load_password(storage: &Storage) -> Option<String> {
 
 // --- Auth middleware ---
 
+/// Hash a password with Argon2id and a random salt.
+fn hash_password(password: &str) -> Result<String, password_hash::Error> {
+    let salt = SaltString::generate(&mut OsRng);
+    let argon2 = Argon2::default();
+    Ok(argon2.hash_password(password.as_bytes(), &salt)?.to_string())
+}
+
+/// Verify a password against a stored hash. Returns `true` if valid.
+fn verify_password(password: &str, hash: &str) -> bool {
+    let Ok(parsed) = PasswordHash::new(hash) else {
+        return false;
+    };
+    Argon2::default().verify_password(password.as_bytes(), &parsed).is_ok()
+}
+
+/// Returns `true` if the stored value is an argon2 PHC string (starts with `$argon2`).
+fn is_hashed(stored: &str) -> bool {
+    stored.starts_with("$argon2")
+}
+
 /// HTTP Basic Auth middleware. Skips auth if no password is set (first-time setup).
+///
+/// Transparently migrates plaintext passwords to argon2 hashes on first successful auth.
 async fn auth_middleware(
     State(state): State<Arc<AppState>>,
     req: Request,
@@ -262,15 +336,15 @@ async fn auth_middleware(
 ) -> impl IntoResponse {
     let storage = state.storage.lock().await;
     let password = load_password(&storage);
-    drop(storage); // release lock before calling next
 
     // No password set — allow everything (first-time setup)
-    let Some(expected) = password else {
+    let Some(stored) = password else {
+        drop(storage);
         return next.run(req).await;
     };
 
-    // Check Basic auth header
-    let authorised = req
+    // Extract Basic auth credentials
+    let provided = req
         .headers()
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
@@ -282,10 +356,35 @@ async fn auth_middleware(
         })
         .map(|creds| {
             // Basic auth format is "user:password" — we only check the password part
-            let pass = creds.split_once(':').map(|(_, p)| p).unwrap_or(&creds);
-            pass == expected
-        })
-        .unwrap_or(false);
+            creds.split_once(':').map(|(_, p)| p.to_string()).unwrap_or(creds)
+        });
+
+    let Some(provided) = provided else {
+        drop(storage);
+        return (
+            StatusCode::UNAUTHORIZED,
+            [(header::WWW_AUTHENTICATE, "Basic realm=\"Heartwood\"")],
+            "Unauthorised",
+        )
+            .into_response();
+    };
+
+    let authorised = if is_hashed(&stored) {
+        verify_password(&provided, &stored)
+    } else {
+        // Legacy plaintext comparison — migrate to argon2 on success
+        if provided == stored {
+            if let Ok(hashed) = hash_password(&provided) {
+                let _ = save_config_key(&storage, "password", json!(hashed));
+                info!("Migrated plaintext password to argon2 hash");
+            }
+            true
+        } else {
+            false
+        }
+    };
+
+    drop(storage); // release lock before calling next
 
     if authorised {
         next.run(req).await
@@ -300,12 +399,8 @@ async fn auth_middleware(
 }
 
 /// Default relays for new installations.
-const DEFAULT_RELAYS: &[&str] = &[
-    "wss://relay.damus.io",
-    "wss://relay.nostr.band",
-    "wss://nos.lol",
-    "wss://relay.trotters.cc",
-];
+const DEFAULT_RELAYS: &[&str] =
+    &["wss://relay.damus.io", "wss://relay.nostr.band", "wss://nos.lol", "wss://relay.trotters.cc"];
 
 /// Load relay list from config, or return defaults.
 fn load_relays(storage: &Storage) -> Vec<String> {
@@ -386,19 +481,29 @@ struct PasswordRequest {
 }
 
 /// `POST /api/password` — set or change the device password.
+///
+/// The password is hashed with Argon2id before storage — the plaintext is never persisted.
 async fn api_set_password(
     State(state): State<Arc<AppState>>,
     axum::Json(req): axum::Json<PasswordRequest>,
 ) -> impl IntoResponse {
     if req.password.is_empty() {
-        return (
-            StatusCode::BAD_REQUEST,
-            axum::Json(json!({"error": "password cannot be empty"})),
-        );
+        return (StatusCode::BAD_REQUEST, axum::Json(json!({"error": "password cannot be empty"})));
     }
 
+    let hashed = match hash_password(&req.password) {
+        Ok(h) => h,
+        Err(e) => {
+            tracing::error!("Failed to hash password: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(json!({"error": "failed to hash password"})),
+            );
+        }
+    };
+
     let storage = state.storage.lock().await;
-    match save_config_key(&storage, "password", json!(req.password)) {
+    match save_config_key(&storage, "password", json!(hashed)) {
         Ok(()) => {
             info!("Device password set");
             (StatusCode::OK, axum::Json(json!({"status": "password set"})))
@@ -452,6 +557,122 @@ async fn api_audit(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     }
 }
 
+// --- Client management (bunker allowlist) ---
+
+/// `GET /api/clients` — return approved and pending clients.
+async fn api_get_clients() -> impl IntoResponse {
+    let approved = load_clients_file("/var/lib/heartwood/clients.json");
+    let pending = load_clients_file("/var/lib/heartwood/pending-clients.json");
+    axum::Json(json!({ "approved": approved, "pending": pending }))
+}
+
+#[derive(Deserialize)]
+struct ApproveClient {
+    pubkey: String,
+    #[serde(default)]
+    allowed_kinds: Option<Vec<u64>>,
+}
+
+/// `POST /api/clients/approve` — approve a pending client pubkey.
+async fn api_approve_client(axum::Json(req): axum::Json<ApproveClient>) -> impl IntoResponse {
+    // Validate hex pubkey format
+    if req.pubkey.len() != 64 || !req.pubkey.chars().all(|c| c.is_ascii_hexdigit()) {
+        return (
+            StatusCode::BAD_REQUEST,
+            axum::Json(json!({"error": "invalid pubkey — expected 64 hex characters"})),
+        );
+    }
+
+    let mut approved = load_clients_file("/var/lib/heartwood/clients.json");
+    let approved_obj = approved.as_object_mut().unwrap();
+    let mut entry = json!({ "approvedAt": chrono_now_iso() });
+    if let Some(kinds) = &req.allowed_kinds {
+        entry["allowedKinds"] = json!(kinds);
+    }
+    approved_obj.insert(req.pubkey.clone(), entry);
+
+    if let Err(e) = write_clients_file("/var/lib/heartwood/clients.json", &approved) {
+        tracing::error!("Failed to save clients.json: {e}");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            axum::Json(json!({"error": "failed to save client list"})),
+        );
+    }
+
+    // Remove from pending
+    let mut pending = load_clients_file("/var/lib/heartwood/pending-clients.json");
+    if let Some(obj) = pending.as_object_mut() {
+        obj.remove(&req.pubkey);
+        let _ = write_clients_file("/var/lib/heartwood/pending-clients.json", &pending);
+    }
+
+    info!("Approved client: {}...", &req.pubkey[..12]);
+    (StatusCode::OK, axum::Json(json!({"status": "approved", "pubkey": req.pubkey})))
+}
+
+#[derive(Deserialize)]
+struct RevokeClient {
+    pubkey: String,
+}
+
+/// `POST /api/clients/revoke` — remove a client from the approved list.
+async fn api_revoke_client(axum::Json(req): axum::Json<RevokeClient>) -> impl IntoResponse {
+    let mut approved = load_clients_file("/var/lib/heartwood/clients.json");
+    if let Some(obj) = approved.as_object_mut() {
+        obj.remove(&req.pubkey);
+        if let Err(e) = write_clients_file("/var/lib/heartwood/clients.json", &approved) {
+            tracing::error!("Failed to save clients.json: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(json!({"error": "failed to save client list"})),
+            );
+        }
+    }
+    info!("Revoked client: {}...", &req.pubkey[..std::cmp::min(12, req.pubkey.len())]);
+    (StatusCode::OK, axum::Json(json!({"status": "revoked", "pubkey": req.pubkey})))
+}
+
+/// Load a JSON file from the filesystem, returning an empty object if missing or malformed.
+fn load_clients_file(path: &str) -> serde_json::Value {
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| json!({}))
+}
+
+/// Write a JSON value to a file with restrictive permissions.
+#[cfg(unix)]
+fn write_clients_file(path: &str, data: &serde_json::Value) -> std::io::Result<()> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let content = serde_json::to_string_pretty(data)
+        .map_err(std::io::Error::other)?;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    std::io::Write::write_all(&mut file, content.as_bytes())
+}
+
+#[cfg(not(unix))]
+fn write_clients_file(path: &str, data: &serde_json::Value) -> std::io::Result<()> {
+    let content = serde_json::to_string_pretty(data)
+        .map_err(std::io::Error::other)?;
+    std::fs::write(path, content)
+}
+
+/// Return the current time as an ISO 8601 string (no external chrono dependency).
+fn chrono_now_iso() -> String {
+    let dur =
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    // Simple ISO format: just the unix timestamp as a string.
+    // For a proper ISO date we'd need chrono, but the bunker only needs a
+    // human-readable timestamp, so we format it manually.
+    let secs = dur.as_secs();
+    format!("{secs}")
+}
+
 /// Build and return the application router.
 ///
 /// No CORS layer is applied — the web UI uses same-origin requests.
@@ -467,6 +688,9 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/password", post(api_set_password))
         .route("/api/tor", post(api_set_tor))
         .route("/api/audit", get(api_audit))
+        .route("/api/clients", get(api_get_clients))
+        .route("/api/clients/approve", post(api_approve_client))
+        .route("/api/clients/revoke", post(api_revoke_client))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
         .layer(DefaultBodyLimit::max(65536))
         .with_state(state)

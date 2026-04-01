@@ -63,6 +63,64 @@ if (existsSync(configPath)) {
   }
 }
 
+// --- 2b. Client allowlist ---
+
+const clientsPath = `${DATA_DIR}/clients.json`
+const pendingClientsPath = `${DATA_DIR}/pending-clients.json`
+
+/** Load a JSON file or return a default value. */
+function loadJson(path, fallback) {
+  if (!existsSync(path)) return fallback
+  try {
+    return JSON.parse(readFileSync(path, 'utf-8'))
+  } catch {
+    return fallback
+  }
+}
+
+/** Save a JSON object to a file with restrictive permissions. */
+function saveJson(path, data) {
+  writeFileSync(path, JSON.stringify(data, null, 2), { mode: 0o600 })
+}
+
+/**
+ * Approved clients. Object keyed by hex pubkey, value is an object with
+ * optional `allowedKinds` (array of numbers) and `approvedAt` (ISO string).
+ * Example: { "ab12...": { "allowedKinds": [1, 7], "approvedAt": "..." } }
+ */
+let approvedClients = loadJson(clientsPath, {})
+
+/**
+ * Pending clients awaiting approval. Object keyed by hex pubkey, value is
+ * { firstSeen: ISO string, lastSeen: ISO string, attempts: number }.
+ */
+let pendingClients = loadJson(pendingClientsPath, {})
+
+/** Check if a client pubkey is approved. */
+function isApproved(pubkey) {
+  return Object.prototype.hasOwnProperty.call(approvedClients, pubkey)
+}
+
+/** Record a pending client connection attempt. */
+function recordPending(pubkey) {
+  const now = new Date().toISOString()
+  if (pendingClients[pubkey]) {
+    pendingClients[pubkey].lastSeen = now
+    pendingClients[pubkey].attempts += 1
+  } else {
+    pendingClients[pubkey] = { firstSeen: now, lastSeen: now, attempts: 1 }
+    console.log(`New pending client: ${pubkey.slice(0, 12)}...`)
+  }
+  saveJson(pendingClientsPath, pendingClients)
+}
+
+/** Check if a signing kind is allowed for a given client. */
+function isKindAllowed(pubkey, kind) {
+  const client = approvedClients[pubkey]
+  if (!client || !client.allowedKinds) return true // no restriction
+  return client.allowedKinds.includes(kind)
+}
+
 // --- 3. Load or generate bunker keypair ---
 
 const bunkerKeyPath = `${DATA_DIR}/bunker.key`
@@ -125,14 +183,45 @@ async function handleRequest(event) {
     return
   }
 
-  console.log(`Request ${request.id}: ${request.method}`)
+  console.log(`Request ${request.id}: ${request.method} from ${clientPk.slice(0, 12)}...`)
 
   let result = ''
   let error
 
+  // --- Client allowlist enforcement ---
+  // connect and ping are always allowed; all other methods require approval.
+  if (request.method !== 'connect' && request.method !== 'ping') {
+    if (!isApproved(clientPk)) {
+      recordPending(clientPk)
+      error = 'client not approved — ask the device owner to approve your pubkey'
+      console.log(`Blocked unapproved client ${clientPk.slice(0, 12)}... (${request.method})`)
+
+      // Send error response and return early
+      const response = JSON.stringify({ id: request.id, result: '', error })
+      const encrypted = encrypt(response, conversationKey)
+      const responseEvent = finalizeEvent(
+        {
+          kind: 24133,
+          created_at: Math.floor(Date.now() / 1000),
+          tags: [['p', clientPk]],
+          content: encrypted,
+        },
+        bunkerSk,
+      )
+      await Promise.any(pool.publish(relays, responseEvent))
+      return
+    }
+  }
+
   switch (request.method) {
     case 'connect':
-      result = 'ack'
+      if (!isApproved(clientPk)) {
+        recordPending(clientPk)
+        result = 'ack'
+        console.log(`Connect from unapproved client ${clientPk.slice(0, 12)}... — recorded as pending`)
+      } else {
+        result = 'ack'
+      }
       break
 
     case 'ping':
@@ -145,6 +234,11 @@ async function handleRequest(event) {
 
     case 'sign_event': {
       const template = JSON.parse(request.params[0])
+      // Kind restriction check
+      if (template.kind !== undefined && !isKindAllowed(clientPk, template.kind)) {
+        error = `signing kind ${template.kind} not permitted for this client`
+        break
+      }
       const signed = finalizeEvent(template, userSk)
       result = JSON.stringify(signed)
       break
@@ -186,7 +280,22 @@ async function handleRequest(event) {
   console.log(`Response ${request.id}: ${error ?? 'ok'}`)
 }
 
-// --- 7. Clean shutdown ---
+// --- 7. Reload client list on file change ---
+
+import { watch } from 'node:fs'
+
+// Watch clients.json so the bunker picks up approvals from the web UI
+// without needing a restart.
+try {
+  watch(clientsPath, () => {
+    approvedClients = loadJson(clientsPath, {})
+    console.log(`Reloaded client allowlist (${Object.keys(approvedClients).length} approved)`)
+  })
+} catch {
+  // File may not exist yet — that's fine, we'll pick up changes on next restart
+}
+
+// --- 8. Clean shutdown ---
 
 function shutdown() {
   console.log('Shutting down...')

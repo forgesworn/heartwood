@@ -15,7 +15,8 @@ async fn main() {
 
     let oled = oled::Oled::new();
     let storage = storage::Storage::new(None);
-    let audit_log = audit::AuditLog::new();
+    let audit_log =
+        audit::AuditLog::with_persistence(std::path::PathBuf::from("/var/lib/heartwood/audit.log"));
 
     oled.show_text("HEARTWOOD");
 

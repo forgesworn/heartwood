@@ -38,6 +38,10 @@ impl Oled {
     }
 
     /// Render `data` as a QR code and display it (terminal in fallback mode).
+    ///
+    /// On hardware, QR data is logged at `debug` level only — it does not
+    /// appear in default journald output (`RUST_LOG=info`). This prevents
+    /// bunker URIs and other sensitive data from leaking into system logs.
     pub fn show_qr(&self, data: &str) {
         match QrCode::with_error_correction_level(data, EcLevel::M) {
             Ok(code) => {
@@ -47,7 +51,7 @@ impl Oled {
                     .light_color(unicode::Dense1x2::Light)
                     .build();
                 if self.is_hardware {
-                    info!("[OLED QR] {}", data);
+                    tracing::debug!("[OLED QR] {}", data);
                 } else {
                     println!("[OLED QR for: {}]", data);
                     println!("{}", image);

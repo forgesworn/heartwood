@@ -181,6 +181,16 @@
             <div id="tor-msg" class="hidden" style="margin-top:0.5rem;"></div>
         </div>
 
+        <!-- CLIENT MANAGEMENT -->
+        <div id="clients-section" class="relay-section hidden">
+            <h2>Bunker Clients</h2>
+            <p style="font-size:0.8rem; opacity:0.45; margin-bottom:0.75rem;">NIP-46 clients must be approved before they can request signatures.</p>
+
+            <div id="pending-clients"></div>
+            <div id="approved-clients"></div>
+            <div id="clients-msg" class="hidden" style="margin-top:0.5rem;"></div>
+        </div>
+
         <!-- PASSWORD CONFIG -->
         <div id="password-section" class="relay-section hidden">
             <h2>Device Password</h2>
@@ -258,8 +268,14 @@
 
         async function doReset() {
             if (!confirm('This will wipe the stored secret from the device. Are you sure?')) return;
+            const password = prompt('Enter your device password to confirm reset:');
+            if (!password) return;
             try {
-                const res = await fetch('/api/reset', { method: 'POST' });
+                const res = await fetch('/api/reset', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password }),
+                });
                 const data = await res.json();
                 if (res.ok) {
                     document.getElementById('configured').classList.add('hidden');
@@ -429,6 +445,95 @@
             }
         }
 
+        // --- Client management ---
+
+        async function loadClients() {
+            try {
+                const res = await fetch('/api/clients');
+                const data = await res.json();
+                renderClients(data.approved || {}, data.pending || {});
+                document.getElementById('clients-section').classList.remove('hidden');
+            } catch {
+                // Clients API not available — hide the section
+            }
+        }
+
+        function renderClients(approved, pending) {
+            const pendingEl = document.getElementById('pending-clients');
+            const approvedEl = document.getElementById('approved-clients');
+            const pendingKeys = Object.keys(pending);
+            const approvedKeys = Object.keys(approved);
+
+            if (pendingKeys.length > 0) {
+                pendingEl.innerHTML = '<p style="font-size:0.85rem; color:#c90; margin-bottom:0.5rem;">Pending approval:</p>' +
+                    pendingKeys.map(pk => `<div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.4rem; background:#1a1508; padding:0.5rem; border-radius:4px; border:1px solid #3a2a08;">
+                        <code style="flex:1; font-size:0.75rem; word-break:break-all; opacity:0.8;">${pk}</code>
+                        <button class="btn-sm btn-save" onclick="approveClient('${pk}')">Approve</button>
+                    </div>`).join('');
+            } else {
+                pendingEl.innerHTML = '';
+            }
+
+            if (approvedKeys.length > 0) {
+                approvedEl.innerHTML = '<p style="font-size:0.85rem; color:#1a6b35; margin-top:0.75rem; margin-bottom:0.5rem;">Approved:</p>' +
+                    approvedKeys.map(pk => `<div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.4rem; background:#0d1a12; padding:0.5rem; border-radius:4px; border:1px solid #1a3a1a;">
+                        <code style="flex:1; font-size:0.75rem; word-break:break-all; opacity:0.8;">${pk}</code>
+                        <button class="relay-rm" onclick="revokeClient('${pk}')" title="Revoke">&times;</button>
+                    </div>`).join('');
+            } else {
+                approvedEl.innerHTML = '';
+            }
+        }
+
+        async function approveClient(pubkey) {
+            const msgEl = document.getElementById('clients-msg');
+            try {
+                const res = await fetch('/api/clients/approve', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pubkey }),
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    msgEl.textContent = 'Client approved';
+                    msgEl.className = 'msg msg-ok';
+                    setTimeout(() => msgEl.className = 'hidden', 2000);
+                    loadClients();
+                } else {
+                    msgEl.textContent = data.error;
+                    msgEl.className = 'msg msg-err';
+                }
+            } catch (e) {
+                msgEl.textContent = 'Connection failed';
+                msgEl.className = 'msg msg-err';
+            }
+        }
+
+        async function revokeClient(pubkey) {
+            if (!confirm('Revoke this client? It will need re-approval to sign.')) return;
+            const msgEl = document.getElementById('clients-msg');
+            try {
+                const res = await fetch('/api/clients/revoke', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pubkey }),
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    msgEl.textContent = 'Client revoked';
+                    msgEl.className = 'msg msg-ok';
+                    setTimeout(() => msgEl.className = 'hidden', 2000);
+                    loadClients();
+                } else {
+                    msgEl.textContent = data.error;
+                    msgEl.className = 'msg msg-err';
+                }
+            } catch (e) {
+                msgEl.textContent = 'Connection failed';
+                msgEl.className = 'msg msg-err';
+            }
+        }
+
         // --- Load initial state ---
 
         fetch('/api/status')
@@ -453,6 +558,7 @@
                 if (d.has_password) {
                     document.getElementById('pw-hint').textContent = 'Password is set. Enter a new one to change it.';
                 }
+                loadClients();
             })
             .catch(() => {
                 document.getElementById('status').textContent = 'Connection failed';
