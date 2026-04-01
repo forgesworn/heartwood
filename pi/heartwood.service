@@ -18,7 +18,7 @@ Environment=HEARTWOOD_BIND=0.0.0.0:3000
 # Security hardening
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/heartwood
+ReadWritePaths=/var/lib/heartwood /run/heartwood
 NoNewPrivileges=true
 PrivateTmp=true
 

@@ -146,7 +146,8 @@ async fn api_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         "mode": mode,
         "npub": npub,
         "relays": relays,
-        "bunker_uri": bunker_uri
+        "bunker_uri": bunker_uri,
+        "onion_address": read_onion_address()
     }))
 }
 
@@ -787,6 +788,40 @@ async fn api_set_tor(
     }
 }
 
+/// Read the Tor .onion address from the hidden service directory.
+fn read_onion_address() -> Option<String> {
+    std::fs::read_to_string("/var/lib/tor/heartwood/hostname")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// `GET /api/tor` — return Tor status and .onion address.
+async fn api_get_tor(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let storage = state.storage.lock().await;
+    let tor_enabled =
+        load_config(&storage).get("tor_enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+    let onion_address = read_onion_address();
+    axum::Json(json!({
+        "tor_enabled": tor_enabled,
+        "onion_address": onion_address,
+    }))
+}
+
+/// `POST /api/restart` — restart the heartwood-device service via systemd.
+///
+/// Only works on systems with systemctl. Returns immediately; the process
+/// will be replaced by systemd after it exits.
+async fn api_restart() -> impl IntoResponse {
+    info!("Restart requested via web UI");
+    // Spawn the restart in a background task so we can return the response first
+    tokio::spawn(async {
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        std::process::exit(0); // systemd RestartSec will restart us
+    });
+    axum::Json(json!({"status": "restarting"}))
+}
+
 /// `GET /api/audit` — return all recent audit log entries as JSON.
 async fn api_audit(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let log = state.audit_log.lock().await;
@@ -930,7 +965,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/relays", get(api_get_relays).post(api_set_relays))
         .route("/api/bunker", get(api_bunker))
         .route("/api/password", post(api_set_password))
-        .route("/api/tor", post(api_set_tor))
+        .route("/api/tor", get(api_get_tor).post(api_set_tor))
+        .route("/api/restart", post(api_restart))
         .route("/api/audit", get(api_audit))
         .route("/api/clients", get(api_get_clients))
         .route("/api/clients/approve", post(api_approve_client))
