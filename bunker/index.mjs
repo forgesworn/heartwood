@@ -14,6 +14,9 @@ import { finalizeEvent, getPublicKey, generateSecretKey } from 'nostr-tools/pure
 import { decode as nip19decode } from 'nostr-tools/nip19'
 import { SimplePool } from 'nostr-tools/pool'
 import WebSocket from 'ws'
+import { fromNsec } from 'nsec-tree/core'
+import { derivePersona } from 'nsec-tree/persona'
+import { bytesToHex } from 'nostr-tools/utils'
 
 globalThis.WebSocket = WebSocket
 
@@ -71,6 +74,50 @@ if (type !== 'nsec') {
 }
 
 const userPk = getPublicKey(userSk)
+
+// --- 1b. nsec-tree persona derivation state ---
+
+const treeRoot = fromNsec(new Uint8Array(userSk))
+const personasPath = `${DATA_DIR}/personas.json`
+
+/**
+ * Persisted persona records. Array of { name, pubkey, purpose, index }.
+ * The private keys are not stored — they're re-derived on demand from the
+ * tree root.
+ */
+let personas = loadJson(personasPath, [])
+
+/**
+ * Active signing identity. Null means the master key (userSk/userPk).
+ * When set, points to a persona entry whose key is used for signing.
+ */
+let activePersonaPubkey = null
+
+// Restore active persona from config
+const personaConfigPath = `${DATA_DIR}/active-persona.json`
+const personaConfig = loadJson(personaConfigPath, {})
+if (personaConfig.activePubkey) {
+  activePersonaPubkey = personaConfig.activePubkey
+}
+
+/** Get the currently active signing key and pubkey. */
+function getActiveSigningKey() {
+  if (!activePersonaPubkey) {
+    return { sk: userSk, pk: userPk }
+  }
+  const persona = personas.find((p) => p.pubkey === activePersonaPubkey)
+  if (!persona) {
+    // Persona was removed — fall back to master
+    activePersonaPubkey = null
+    return { sk: userSk, pk: userPk }
+  }
+  // Re-derive the private key from the tree root
+  const derived = derivePersona(treeRoot, persona.name, persona.index)
+  return {
+    sk: derived.identity.privateKey,
+    pk: bytesToHex(derived.identity.publicKey),
+  }
+}
 
 // --- 2. Read relay list from config.json ---
 
@@ -313,9 +360,11 @@ async function handleRequest(event) {
       result = 'pong'
       break
 
-    case 'get_public_key':
-      result = userPk
+    case 'get_public_key': {
+      const active = getActiveSigningKey()
+      result = active.pk
       break
+    }
 
     case 'sign_event': {
       const template = JSON.parse(request.params[0])
@@ -324,20 +373,81 @@ async function handleRequest(event) {
         error = `signing kind ${template.kind} not permitted for this client`
         break
       }
-      const signed = finalizeEvent(template, userSk)
+      const active = getActiveSigningKey()
+      const signed = finalizeEvent(template, active.sk)
       result = JSON.stringify(signed)
       break
     }
 
     case 'nip44_encrypt': {
-      const ck = getConversationKey(userSk, request.params[0])
+      const active = getActiveSigningKey()
+      const ck = getConversationKey(active.sk, request.params[0])
       result = encrypt(request.params[1], ck)
       break
     }
 
     case 'nip44_decrypt': {
-      const ck = getConversationKey(userSk, request.params[0])
+      const active = getActiveSigningKey()
+      const ck = getConversationKey(active.sk, request.params[0])
       result = decrypt(request.params[1], ck)
+      break
+    }
+
+    // --- Heartwood persona methods ---
+
+    case 'heartwood_list_identities': {
+      const identityList = [
+        { name: 'master', pubkey: userPk, purpose: 'master', index: 0 },
+        ...personas.map((p) => ({
+          name: p.name,
+          pubkey: p.pubkey,
+          purpose: p.purpose,
+          index: p.index,
+        })),
+      ]
+      result = JSON.stringify(identityList)
+      break
+    }
+
+    case 'heartwood_derive': {
+      const name = request.params[0]
+      const index = parseInt(request.params[1] ?? '0', 10)
+
+      // Check for duplicate
+      const existing = personas.find((p) => p.name === name && p.index === index)
+      if (existing) {
+        result = JSON.stringify({ name, pubkey: existing.pubkey, purpose: existing.purpose, index })
+        break
+      }
+
+      const derived = derivePersona(treeRoot, name, index)
+      const pubkey = bytesToHex(derived.identity.publicKey)
+      const record = { name, pubkey, purpose: derived.identity.purpose, index: derived.index }
+      personas.push(record)
+      saveJson(personasPath, personas)
+      console.log(`Derived persona "${name}" → ${pubkey.slice(0, 12)}...`)
+      result = JSON.stringify(record)
+      break
+    }
+
+    case 'heartwood_switch': {
+      const targetPubkey = request.params[0]
+      if (targetPubkey === userPk) {
+        // Switch back to master
+        activePersonaPubkey = null
+        saveJson(personaConfigPath, { activePubkey: null })
+        result = JSON.stringify({ switched: true, pubkey: userPk, name: 'master' })
+        break
+      }
+      const target = personas.find((p) => p.pubkey === targetPubkey)
+      if (!target) {
+        error = `unknown persona: ${targetPubkey.slice(0, 12)}...`
+        break
+      }
+      activePersonaPubkey = targetPubkey
+      saveJson(personaConfigPath, { activePubkey: targetPubkey })
+      console.log(`Switched to persona "${target.name}" (${targetPubkey.slice(0, 12)}...)`)
+      result = JSON.stringify({ switched: true, pubkey: targetPubkey, name: target.name })
       break
     }
 
@@ -385,6 +495,7 @@ try {
 function shutdown() {
   console.log('Shutting down...')
   pool.close(relays)
+  treeRoot.destroy()
   bunkerSk.fill(0)
   userSk.fill(0)
   process.exit(0)
