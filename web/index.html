@@ -277,6 +277,13 @@
         let currentMode = 'bunker';
         let relayStatuses = {};
 
+        function dotClass(status) {
+            return 'relay-dot ' + (status === true ? 'connected' : status === false ? 'disconnected' : 'unknown');
+        }
+        function dotTitle(status) {
+            return status === true ? 'Connected' : status === false ? 'Disconnected' : 'Unknown';
+        }
+
         function selectMode(mode) {
             currentMode = mode;
             document.querySelectorAll('.mode-card').forEach(c =>
@@ -450,8 +457,8 @@
                 const li = document.createElement('li');
                 const dot = document.createElement('span');
                 const status = relayStatuses[r];
-                dot.className = 'relay-dot ' + (status === true ? 'connected' : status === false ? 'disconnected' : 'unknown');
-                dot.title = status === true ? 'Connected' : status === false ? 'Disconnected' : 'Unknown';
+                dot.className = dotClass(status);
+                dot.title = dotTitle(status);
                 const input = document.createElement('input');
                 input.type = 'text';
                 input.value = r;
@@ -782,17 +789,16 @@
                 const res = await fetch('/api/bunker/status');
                 const data = await res.json();
                 if (data.relays) {
-                    // If timestamp is > 45s old, bunker may be down — show unknown
+                    // 45s = 3× the 15s write interval — generous staleness window
                     const stale = data.ts && (Date.now() - new Date(data.ts).getTime() > 45000);
                     relayStatuses = stale ? {} : data.relays;
                 } else {
                     relayStatuses = {};
                 }
-                updateRelayDots();
             } catch {
                 relayStatuses = {};
-                updateRelayDots();
             }
+            updateRelayDots();
         }
 
         function updateRelayDots() {
@@ -805,8 +811,8 @@
                 }
                 const url = input ? input.value.trim() : '';
                 const status = relayStatuses[url];
-                dot.className = 'relay-dot ' + (status === true ? 'connected' : status === false ? 'disconnected' : 'unknown');
-                dot.title = status === true ? 'Connected' : status === false ? 'Disconnected' : 'Unknown';
+                dot.className = dotClass(status);
+                dot.title = dotTitle(status);
             });
 
             // Update summary in heading

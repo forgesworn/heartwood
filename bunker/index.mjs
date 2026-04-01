@@ -9,6 +9,7 @@
  */
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { writeFile } from 'node:fs/promises'
 import { getConversationKey, encrypt, decrypt } from 'nostr-tools/nip44'
 import { finalizeEvent, getPublicKey, generateSecretKey } from 'nostr-tools/pure'
 import { decode as nip19decode } from 'nostr-tools/nip19'
@@ -548,6 +549,7 @@ try {
 // --- 8. Relay status reporting ---
 
 const STATUS_PATH = `${DATA_DIR}/bunker-status.json`
+let lastStatusJson = ''
 
 async function writeRelayStatus() {
   const status = {}
@@ -564,15 +566,11 @@ async function writeRelayStatus() {
       }
     }),
   )
-  try {
-    writeFileSync(
-      STATUS_PATH,
-      JSON.stringify({ relays: status, ts: new Date().toISOString() }),
-      { mode: 0o644 },
-    )
-  } catch {
-    // Non-critical — status file is advisory
-  }
+  const json = JSON.stringify({ relays: status, ts: new Date().toISOString() })
+  if (json === lastStatusJson) return
+  lastStatusJson = json
+  // 0o644 intentionally (not 0o600 like secrets) — the Rust device reads this
+  await writeFile(STATUS_PATH, json, { mode: 0o644 }).catch(() => {})
 }
 
 // Initial write after connections establish, then periodic
