@@ -181,14 +181,8 @@ async fn api_setup(
     }
 
     // Validate PIN: 4–8 digits
-    if req.pin.len() < 4
-        || req.pin.len() > 8
-        || !req.pin.chars().all(|c| c.is_ascii_digit())
-    {
-        return (
-            StatusCode::BAD_REQUEST,
-            axum::Json(json!({"error": "PIN must be 4–8 digits"})),
-        );
+    if req.pin.len() < 4 || req.pin.len() > 8 || !req.pin.chars().all(|c| c.is_ascii_digit()) {
+        return (StatusCode::BAD_REQUEST, axum::Json(json!({"error": "PIN must be 4–8 digits"})));
     }
 
     let (npub, payload) = match req.mode.as_str() {
@@ -355,7 +349,9 @@ fn write_runtime_payload(payload: &str) {
         tracing::warn!("Could not create runtime directory {}", dir.display());
         return;
     }
-    if let Err(e) = storage::write_secret_file(std::path::Path::new(RUNTIME_PAYLOAD_PATH), payload.as_bytes()) {
+    if let Err(e) =
+        storage::write_secret_file(std::path::Path::new(RUNTIME_PAYLOAD_PATH), payload.as_bytes())
+    {
         tracing::warn!("Could not write runtime payload: {e}");
     }
 }
@@ -386,20 +382,29 @@ async fn api_unlock(
     let storage = state.storage.lock().await;
 
     if !storage.has_master_secret() {
-        return (StatusCode::BAD_REQUEST, axum::Json(json!({"error": "no secret stored — run setup first"})));
+        return (
+            StatusCode::BAD_REQUEST,
+            axum::Json(json!({"error": "no secret stored — run setup first"})),
+        );
     }
 
     let bytes = match storage.load_master_secret() {
         Ok(b) => b,
         Err(e) => {
             tracing::error!("Failed to read master secret: {e}");
-            return (StatusCode::INTERNAL_SERVER_ERROR, axum::Json(json!({"error": "failed to read secret"})));
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(json!({"error": "failed to read secret"})),
+            );
         }
     };
     drop(storage);
 
     if !storage::is_encrypted(&bytes) {
-        return (StatusCode::CONFLICT, axum::Json(json!({"error": "secret is not encrypted — use /api/set-pin first"})));
+        return (
+            StatusCode::CONFLICT,
+            axum::Json(json!({"error": "secret is not encrypted — use /api/set-pin first"})),
+        );
     }
 
     match storage::decrypt_with_pin(&req.pin, &bytes) {
@@ -410,9 +415,7 @@ async fn api_unlock(
             info!("Device unlocked");
             (StatusCode::OK, axum::Json(json!({"status": "unlocked"})))
         }
-        Err(_) => {
-            (StatusCode::FORBIDDEN, axum::Json(json!({"error": "incorrect PIN"})))
-        }
+        Err(_) => (StatusCode::FORBIDDEN, axum::Json(json!({"error": "incorrect PIN"}))),
     }
 }
 
@@ -451,7 +454,10 @@ async fn api_set_pin(
         Ok(b) => b,
         Err(e) => {
             tracing::error!("Failed to read master secret: {e}");
-            return (StatusCode::INTERNAL_SERVER_ERROR, axum::Json(json!({"error": "failed to read secret"})));
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(json!({"error": "failed to read secret"})),
+            );
         }
     };
 
@@ -463,7 +469,10 @@ async fn api_set_pin(
     let encrypted = storage::encrypt_with_pin(&req.pin, &bytes);
     if let Err(e) = storage.save_master_secret(&encrypted) {
         tracing::error!("Failed to save encrypted secret: {e}");
-        return (StatusCode::INTERNAL_SERVER_ERROR, axum::Json(json!({"error": "failed to save encrypted secret"})));
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            axum::Json(json!({"error": "failed to save encrypted secret"})),
+        );
     }
 
     // Cache the decrypted payload — device is now unlocked
@@ -503,7 +512,9 @@ async fn lock_middleware(
         if payload.is_none() {
             return (
                 StatusCode::LOCKED,
-                axum::Json(json!({"error": "device is locked — POST to /api/unlock with your PIN"})),
+                axum::Json(
+                    json!({"error": "device is locked — POST to /api/unlock with your PIN"}),
+                ),
             )
                 .into_response();
         }
@@ -876,8 +887,7 @@ fn load_clients_file(path: &str) -> serde_json::Value {
 #[cfg(unix)]
 fn write_clients_file(path: &str, data: &serde_json::Value) -> std::io::Result<()> {
     use std::os::unix::fs::OpenOptionsExt;
-    let content = serde_json::to_string_pretty(data)
-        .map_err(std::io::Error::other)?;
+    let content = serde_json::to_string_pretty(data).map_err(std::io::Error::other)?;
     let mut file = std::fs::OpenOptions::new()
         .write(true)
         .create(true)
@@ -889,8 +899,7 @@ fn write_clients_file(path: &str, data: &serde_json::Value) -> std::io::Result<(
 
 #[cfg(not(unix))]
 fn write_clients_file(path: &str, data: &serde_json::Value) -> std::io::Result<()> {
-    let content = serde_json::to_string_pretty(data)
-        .map_err(std::io::Error::other)?;
+    let content = serde_json::to_string_pretty(data).map_err(std::io::Error::other)?;
     std::fs::write(path, content)
 }
 
