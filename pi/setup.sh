@@ -31,12 +31,29 @@ fi
 
 # Install and enable systemd service
 sudo cp heartwood.service /etc/systemd/system/
+
+# Install bunker sidecar
+if [ -d "../bunker" ]; then
+    sudo mkdir -p /opt/heartwood/bunker
+    sudo cp ../bunker/index.mjs ../bunker/package.json /opt/heartwood/bunker/
+    cd /opt/heartwood/bunker && sudo npm install --omit=dev 2>/dev/null && cd -
+    sudo chown -R heartwood:heartwood /opt/heartwood
+fi
+if [ -f "heartwood-bunker.service" ]; then
+    sudo cp heartwood-bunker.service /etc/systemd/system/
+fi
+
 sudo systemctl daemon-reload
 sudo systemctl enable heartwood
 sudo systemctl start heartwood
+if [ -f /etc/systemd/system/heartwood-bunker.service ]; then
+    sudo systemctl enable heartwood-bunker
+    sudo systemctl start heartwood-bunker
+fi
 
 echo "=== Heartwood installed ==="
 echo "Check status: sudo systemctl status heartwood"
-echo "View logs:    sudo journalctl -u heartwood -f"
+echo "Bunker:       sudo systemctl status heartwood-bunker"
+echo "View logs:    sudo journalctl -u heartwood -u heartwood-bunker -f"
 echo ""
 echo "Open http://$(hostname).local:3000 in your browser to configure."

@@ -38,21 +38,22 @@ No soldering. No custom hardware. Flash an SD card and go.
 
 ## Quick start
 
+On a Raspberry Pi running Raspberry Pi OS Lite (64-bit):
+
 ```bash
-# On a fresh Raspberry Pi OS Lite
-git clone https://github.com/forgesworn/heartwood
-cd heartwood
+curl -sL https://github.com/forgesworn/heartwood/releases/latest/download/install.sh | sudo bash
+```
+
+Then open `http://<hostname>.local:3000` in your browser and follow the setup wizard. See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the full walkthrough.
+
+Build from source instead:
+
+```bash
+git clone https://github.com/forgesworn/heartwood && cd heartwood
 cargo build --release -p heartwood-device
-cd pi && bash setup.sh
+cd bunker && npm install && cd ..
+cd pi && sudo bash setup.sh
 ```
-
-Wait ~60 seconds for Tor, then:
-
-```bash
-sudo cat /var/lib/tor/heartwood/hostname
-```
-
-Scan the .onion address with your Nostr client to pair.
 
 ## Development
 

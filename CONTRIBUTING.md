@@ -22,7 +22,7 @@ cross build --release --target aarch64-unknown-linux-gnu -p heartwood-device
 
 | Command | Purpose |
 |---------|---------|
-| `cargo test` | Run all tests (40+) |
+| `cargo test` | Run all tests (55) |
 | `cargo test -p heartwood-core` | Core crypto tests only |
 | `cargo run -p heartwood-device` | Run device binary in terminal mode |
 | `cargo clippy --all-targets` | Lint |

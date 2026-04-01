@@ -153,7 +153,7 @@ jobs:
           # Configure Tor hidden service
           sudo mkdir -p /etc/tor/torrc.d
           echo "HiddenServiceDir /var/lib/tor/heartwood/" | sudo tee /etc/tor/torrc.d/heartwood.conf > /dev/null
-          echo "HiddenServicePort 80 127.0.0.1:8080" | sudo tee -a /etc/tor/torrc.d/heartwood.conf > /dev/null
+          echo "HiddenServicePort 80 127.0.0.1:3000" | sudo tee -a /etc/tor/torrc.d/heartwood.conf > /dev/null
           sudo systemctl restart tor
 
           # Install systemd service
@@ -173,9 +173,10 @@ jobs:
           StartLimitBurst=5
           StartLimitIntervalSec=60
           Environment=RUST_LOG=info
+          Environment=HEARTWOOD_BIND=0.0.0.0:3000
           ProtectSystem=strict
           ProtectHome=true
-          ReadWritePaths=/var/lib/heartwood
+          ReadWritePaths=/var/lib/heartwood /run/heartwood
           NoNewPrivileges=true
           PrivateTmp=true
           CapabilityBoundingSet=
@@ -198,12 +199,73 @@ jobs:
 
           sudo systemctl daemon-reload
           sudo systemctl enable heartwood
+
+          # Install Node.js for the bunker sidecar
+          if ! command -v node &> /dev/null; then
+            echo "Installing Node.js..."
+            curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+            sudo apt-get install -y -qq nodejs
+          fi
+
+          # Install bunker sidecar
+          echo "Installing bunker sidecar..."
+          sudo mkdir -p /opt/heartwood/bunker
+          curl -sL "https://raw.githubusercontent.com/$REPO/$TAG/bunker/index.mjs" \
+            -o /opt/heartwood/bunker/index.mjs
+          curl -sL "https://raw.githubusercontent.com/$REPO/$TAG/bunker/package.json" \
+            -o /opt/heartwood/bunker/package.json
+          cd /opt/heartwood/bunker && sudo npm install --omit=dev 2>/dev/null && cd /
+          sudo chown -R heartwood:heartwood /opt/heartwood
+
+          cat << 'BUNKER_SERVICE' | sudo tee /etc/systemd/system/heartwood-bunker.service > /dev/null
+          [Unit]
+          Description=Heartwood NIP-46 bunker
+          After=network-online.target heartwood.service
+          Wants=network-online.target
+          Requires=heartwood.service
+          StartLimitBurst=5
+          StartLimitIntervalSec=60
+
+          [Service]
+          Type=simple
+          User=heartwood
+          Group=heartwood
+          WorkingDirectory=/opt/heartwood/bunker
+          ExecStart=/usr/bin/node index.mjs
+          Restart=always
+          RestartSec=15
+          Environment=NODE_ENV=production
+          ProtectSystem=strict
+          ProtectHome=read-only
+          ReadWritePaths=/var/lib/heartwood
+          ReadOnlyPaths=/opt/heartwood
+          NoNewPrivileges=true
+          PrivateTmp=true
+          CapabilityBoundingSet=
+          SystemCallFilter=@system-service
+          SystemCallErrorNumber=EPERM
+          RestrictRealtime=true
+          RestrictSUIDSGID=true
+          LockPersonality=true
+          ProtectKernelTunables=true
+          ProtectKernelModules=true
+          ProtectControlGroups=true
+          RestrictNamespaces=true
+
+          [Install]
+          WantedBy=multi-user.target
+          BUNKER_SERVICE
+
+          sudo systemctl daemon-reload
+          sudo systemctl enable heartwood heartwood-bunker
           sudo systemctl start heartwood
+          sudo systemctl start heartwood-bunker
 
           echo ""
           echo "=== Heartwood installed ==="
           echo "Status:  sudo systemctl status heartwood"
-          echo "Logs:    sudo journalctl -u heartwood -f"
+          echo "Bunker:  sudo systemctl status heartwood-bunker"
+          echo "Logs:    sudo journalctl -u heartwood -u heartwood-bunker -f"
           echo ""
           echo "Waiting for Tor hidden service..."
           for i in $(seq 1 60); do

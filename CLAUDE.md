@@ -53,9 +53,13 @@ crates/
       storage.rs              Persistent storage (master secret, sessions)
       tor.rs                  TorManager (start Tor, wait for .onion)
       oled.rs                 OLED display driver (SSD1306)
+bunker/
+  index.mjs                   NIP-46 bunker sidecar (Node.js)
+  package.json                Bunker dependencies (nostr-tools, nsec-tree, ws)
 pi/
   setup.sh                    Pi deployment script
-  heartwood.service           systemd unit
+  heartwood.service           systemd unit (Rust binary)
+  heartwood-bunker.service    systemd unit (Node.js bunker sidecar)
   torrc                       Tor hidden service config
 web/
   index.html                  Bundled web UI (served by heartwood-device)

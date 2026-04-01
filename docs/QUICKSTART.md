@@ -48,10 +48,10 @@ ssh satoshi@192.168.1.XXX
 Run this one command on the Pi:
 
 ```bash
-curl -sL https://raw.githubusercontent.com/forgesworn/heartwood/main/pi/install.sh | sudo bash
+curl -sL https://github.com/forgesworn/heartwood/releases/latest/download/install.sh | sudo bash
 ```
 
-This downloads the latest release, installs Tor, creates the system service, and starts everything. It takes about 2 minutes.
+This downloads the latest release binary, installs Node.js and the NIP-46 bunker sidecar, configures Tor, creates system services, and starts everything. It takes about 2–3 minutes.
 
 When it finishes, you'll see your `.onion` address — save it somewhere. You can also find it later:
 
@@ -81,33 +81,25 @@ You should see the Heartwood setup screen.
 
 Your npub will appear on screen. The nsec is now encrypted on the Pi with AES-256-GCM — you won't need to paste it again.
 
-## Step 6: Start the bunker
+The bunker sidecar connects to relays automatically. Within a few seconds, the **Relays** section will show green dots next to each connected relay.
 
-The web UI handles configuration. Now enable the NIP-46 bunker sidecar:
-
-```bash
-sudo systemctl enable heartwood-bunker
-sudo systemctl start heartwood-bunker
-```
-
-The bunker connects to Nostr relays and listens for signing requests.
-
-## Step 7: Connect from a Nostr client
+## Step 6: Connect from a Nostr client
 
 1. In the Heartwood web UI, find the **Bunker connection string** (starts with `bunker://...`)
 2. Click **Copy**
-3. Open your Nostr client (NostrHub, Amethyst, Damus, etc.)
+3. Open your Nostr client (Bark, NostrHub, Amethyst, etc.)
 4. Look for "Login with bunker" or "NIP-46 / Nostr Connect"
 5. Paste the bunker connection string
-6. You should see your npub appear — you're signed in through Heartwood
 
-The Pi signs events on your behalf. Your nsec never leaves the device.
+The client will appear in the **Bunker Clients** section of the web UI as "Awaiting approval". Give it a label (e.g. "Bark" or "My phone") and click **Approve**.
 
-## Step 8: Set a device password (recommended)
+Once approved, the client can request signatures. Your nsec never leaves the device.
+
+## Step 7: Set a device password (recommended)
 
 In the web UI, scroll down to **Device Password** and set one. This protects the web UI with HTTP Basic Auth — anyone on your network would need the password to access settings.
 
-## Step 9: Access from anywhere (Tor)
+## Step 8: Access from anywhere (Tor)
 
 If Tor is enabled (check the toggle in the web UI), you can access Heartwood from anywhere using your `.onion` address. The address is shown in the web UI with a copy button.
 
@@ -119,6 +111,15 @@ This works from any network — VPN, coffee shop WiFi, your phone on mobile data
 - **When you're done**, click **Lock device** in the web UI. The decrypted key is cleared from memory.
 - **If you lose power**, the Pi boots locked. Your key is safe — it's encrypted on the SD card.
 - **If you forget your PIN**, you'll need to reset the device and set up again with your nsec.
+
+## The web UI at a glance
+
+- **Status bar** — device status and version
+- **Bunker connection string** — copy this into your Nostr client
+- **Relays** — green/red/grey dots show which relays the bunker is connected to (updates every 15 seconds)
+- **Bunker Clients** — see pending and approved NIP-46 clients, label them, approve or revoke
+- **Tor** — enable/disable the hidden service
+- **Device Password** — protect the web UI
 
 ## Troubleshooting
 
@@ -132,10 +133,11 @@ This works from any network — VPN, coffee shop WiFi, your phone on mobile data
 - Make sure you're on the same WiFi as the Pi
 - Try the IP address directly: `http://192.168.1.XXX:3000`
 
-**Bunker not connecting from NostrHub?**
+**Client stuck on "Verifying identity..."?**
 - Make sure the Pi is unlocked (enter your PIN in the web UI first)
+- Check the relay dots — at least one should be green
 - Check the bunker is running: `ssh satoshi@heartwood.local "sudo systemctl status heartwood-bunker"`
-- Try restarting: `ssh satoshi@heartwood.local "sudo systemctl restart heartwood-bunker"`
+- Restart the bunker: `ssh satoshi@heartwood.local "sudo systemctl restart heartwood-bunker"`
 
 **Forgot your PIN?**
 - SSH into the Pi and delete the encrypted secret, then set up again:
@@ -143,6 +145,16 @@ This works from any network — VPN, coffee shop WiFi, your phone on mobile data
   ssh satoshi@heartwood.local "sudo rm /var/lib/heartwood/master.secret"
   ```
   Then refresh the web UI — you'll see the setup screen.
+
+## Updating
+
+When a new version is released, SSH into the Pi and re-run the installer:
+
+```bash
+curl -sL https://github.com/forgesworn/heartwood/releases/latest/download/install.sh | sudo bash
+```
+
+This downloads the latest binary and bunker code, restarts the services, and preserves your existing configuration.
 
 ## Developer quickstart
 
