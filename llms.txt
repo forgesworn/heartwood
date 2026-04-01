@@ -106,16 +106,19 @@ Heartwood routes all NIP-46 traffic through Tor. Connect via the `.onion` addres
 
 - Keys derived via HMAC-SHA256 (RFC 2104) -- not BIP-32 extended keys at the child level
 - Master secret zeroed from RAM on drop (`zeroize` crate), intermediate secrets explicitly zeroised
+- Device password hashed with Argon2id before storage -- plaintext never persisted
+- Device reset requires current password confirmation in POST body (defence in depth)
+- Client approval required before the NIP-46 bunker signs for a new client pubkey
+- Per-client kind restrictions on sign_event (e.g. "client A may sign kind 1 but not kind 0")
 - Nsec filtering on all NIP-46 responses (private keys cannot leak through the protocol layer)
 - Session expiry (10 min idle), max 32 concurrent sessions, hex pubkey validation
 - Method-level permissions: privileged operations (derive, recover, create proof) require explicit client opt-in
 - Storage files written with 0600 permissions (owner-only); secure zero-overwrite on deletion
 - NIP-46 messages are NIP-44 encrypted end-to-end
 - Tor hidden service -- no clearnet exposure, no IP address, no port forwarding
-- Per-client kind permissions: e.g. "client A may sign kind 1 but not kind 0" (types implemented, wiring in progress)
-- Rate limiting per client session (types implemented, wiring in progress)
+- Audit log persisted to disk as append-only JSON lines (1 MiB cap with rotation, 0600 permissions)
 - No cross-origin API access (CORS removed; all UI requests are same-origin)
-- 55 tests including frozen protocol vectors cross-validated against TypeScript reference implementation
+- 91 tests including frozen protocol vectors cross-validated against TypeScript reference implementation
 
 ## Competitors
 
