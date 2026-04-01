@@ -200,7 +200,7 @@ fn set_dir_permissions(_path: &Path) -> io::Result<()> {
 
 /// Write secret material to a file with mode 0600 (owner read/write only).
 #[cfg(unix)]
-fn write_secret_file(path: &Path, data: &[u8]) -> io::Result<()> {
+pub(crate) fn write_secret_file(path: &Path, data: &[u8]) -> io::Result<()> {
     use std::os::unix::fs::OpenOptionsExt;
 
     let mut file =
@@ -211,7 +211,7 @@ fn write_secret_file(path: &Path, data: &[u8]) -> io::Result<()> {
 
 /// Write secret material to a file (non-Unix fallback).
 #[cfg(not(unix))]
-fn write_secret_file(path: &Path, data: &[u8]) -> io::Result<()> {
+pub(crate) fn write_secret_file(path: &Path, data: &[u8]) -> io::Result<()> {
     fs::write(path, data)
 }
 

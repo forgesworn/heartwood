@@ -26,14 +26,38 @@ const DEFAULT_RELAYS = [
 ]
 
 // --- 1. Read nsec from master.secret ---
+//
+// The master.secret file may be encrypted (AES-256-GCM, first byte 0x01).
+// When encrypted, the Rust device writes the decrypted payload to a runtime
+// path after PIN unlock. The bunker reads from the runtime path first, then
+// falls back to the primary path (for legacy unencrypted installations).
 
 const secretPath = `${DATA_DIR}/master.secret`
-if (!existsSync(secretPath)) {
-  console.error('FATAL: master.secret not found — is heartwood-device configured?')
-  process.exit(1)
+const runtimePayloadPath = '/run/heartwood/master.payload'
+
+function readSecretPayload() {
+  // Try runtime path first (written by heartwood-device after PIN unlock)
+  if (existsSync(runtimePayloadPath)) {
+    return readFileSync(runtimePayloadPath, 'utf-8').trim()
+  }
+
+  if (!existsSync(secretPath)) {
+    console.error('FATAL: master.secret not found — is heartwood-device configured?')
+    process.exit(1)
+  }
+
+  const raw = readFileSync(secretPath)
+  // Encrypted files start with version byte 0x01 (not valid UTF-8 text prefix)
+  if (raw[0] === 0x01) {
+    console.error('FATAL: master.secret is encrypted but device is locked')
+    console.error('       Unlock the device via the web UI, then restart the bunker.')
+    process.exit(1)
+  }
+
+  return raw.toString('utf-8').trim()
 }
 
-const secretPayload = readFileSync(secretPath, 'utf-8').trim()
+const secretPayload = readSecretPayload()
 if (!secretPayload.startsWith('bunker:')) {
   console.error('FATAL: master.secret is not in bunker mode (expected "bunker:<nsec>")')
   process.exit(1)
@@ -121,6 +145,44 @@ function isKindAllowed(pubkey, kind) {
   return client.allowedKinds.includes(kind)
 }
 
+// --- Per-client rate limiting (sliding window) ---
+
+const DEFAULT_RATE_LIMIT = 30 // requests per minute
+const RATE_WINDOW_MS = 60_000
+
+/** Map of client pubkey → array of request timestamps (epoch ms). */
+const rateBuckets = new Map()
+
+/**
+ * Check if a client has exceeded their rate limit.
+ * Returns true if the request should be allowed, false if rate-limited.
+ */
+function checkRateLimit(pubkey) {
+  const now = Date.now()
+  let timestamps = rateBuckets.get(pubkey)
+  if (!timestamps) {
+    timestamps = []
+    rateBuckets.set(pubkey, timestamps)
+  }
+
+  // Prune entries older than the window
+  const cutoff = now - RATE_WINDOW_MS
+  while (timestamps.length > 0 && timestamps[0] < cutoff) {
+    timestamps.shift()
+  }
+
+  // Per-client limit from clients.json, or default
+  const client = approvedClients[pubkey]
+  const limit = client?.rateLimit ?? DEFAULT_RATE_LIMIT
+
+  if (timestamps.length >= limit) {
+    return false
+  }
+
+  timestamps.push(now)
+  return true
+}
+
 // --- 3. Load or generate bunker keypair ---
 
 const bunkerKeyPath = `${DATA_DIR}/bunker.key`
@@ -197,6 +259,29 @@ async function handleRequest(event) {
       console.log(`Blocked unapproved client ${clientPk.slice(0, 12)}... (${request.method})`)
 
       // Send error response and return early
+      const response = JSON.stringify({ id: request.id, result: '', error })
+      const encrypted = encrypt(response, conversationKey)
+      const responseEvent = finalizeEvent(
+        {
+          kind: 24133,
+          created_at: Math.floor(Date.now() / 1000),
+          tags: [['p', clientPk]],
+          content: encrypted,
+        },
+        bunkerSk,
+      )
+      await Promise.any(pool.publish(relays, responseEvent))
+      return
+    }
+  }
+
+  // --- Rate limit enforcement ---
+  // connect and ping are exempt; all other methods are rate-limited.
+  if (request.method !== 'connect' && request.method !== 'ping') {
+    if (!checkRateLimit(clientPk)) {
+      error = 'rate limit exceeded — try again shortly'
+      console.log(`Rate-limited ${clientPk.slice(0, 12)}... (${request.method})`)
+
       const response = JSON.stringify({ id: request.id, result: '', error })
       const encrypted = encrypt(response, conversationKey)
       const responseEvent = finalizeEvent(
