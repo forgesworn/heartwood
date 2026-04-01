@@ -206,7 +206,7 @@ const pool = new SimplePool()
 
 pool.subscribeMany(
   relays,
-  [{ kinds: [24133], '#p': [bunkerPk] }],
+  { kinds: [24133], '#p': [bunkerPk] },
   {
     onevent: async (event) => {
       try {
