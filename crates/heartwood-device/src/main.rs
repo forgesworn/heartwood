@@ -28,10 +28,8 @@ async fn main() {
         oled.show_text("READY");
     }
 
-    let state = Arc::new(web::AppState {
-        audit_log: Mutex::new(audit_log),
-        storage: Mutex::new(storage),
-    });
+    let state =
+        Arc::new(web::AppState { audit_log: Mutex::new(audit_log), storage: Mutex::new(storage) });
     let app = web::create_router(state);
 
     let bind_addr = std::env::var("HEARTWOOD_BIND").unwrap_or_else(|_| "0.0.0.0:3000".to_string());

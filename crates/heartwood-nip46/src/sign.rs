@@ -20,27 +20,21 @@ pub fn sign_event(
     private_key: &[u8; 32],
     template: &serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    let kind = template["kind"]
-        .as_u64()
-        .ok_or("missing or invalid 'kind'")?;
-    let created_at = template["created_at"]
-        .as_u64()
-        .ok_or("missing or invalid 'created_at'")?;
+    let kind = template["kind"].as_u64().ok_or("missing or invalid 'kind'")?;
+    let created_at = template["created_at"].as_u64().ok_or("missing or invalid 'created_at'")?;
     let tags = template.get("tags").ok_or("missing 'tags'")?;
-    let content = template["content"]
-        .as_str()
-        .ok_or("missing or invalid 'content'")?;
+    let content = template["content"].as_str().ok_or("missing or invalid 'content'")?;
 
-    let signing_key = SigningKey::from_bytes(private_key)
-        .map_err(|e| format!("invalid private key: {e}"))?;
+    let signing_key =
+        SigningKey::from_bytes(private_key).map_err(|e| format!("invalid private key: {e}"))?;
     let pubkey_bytes: [u8; 32] = signing_key.verifying_key().to_bytes().into();
     let pubkey_hex = hex::encode(pubkey_bytes);
 
     // NIP-01 event ID: SHA-256 of the serialised commitment array.
     // Format: [0, pubkey_hex, created_at, kind, tags, content]
     let commitment = serde_json::json!([0, pubkey_hex, created_at, kind, tags, content]);
-    let commitment_bytes = serde_json::to_string(&commitment)
-        .map_err(|e| format!("serialisation failed: {e}"))?;
+    let commitment_bytes =
+        serde_json::to_string(&commitment).map_err(|e| format!("serialisation failed: {e}"))?;
 
     let mut hasher = Sha256::new();
     hasher.update(commitment_bytes.as_bytes());
