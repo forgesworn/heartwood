@@ -49,14 +49,19 @@ fn main() -> Result<(), heartwood_core::HeartwoodError> {
     // the derivation path (blind) or with it (full).
     let blind_proof = heartwood_core::create_blind_proof(&root, &social)?;
     assert!(heartwood_core::verify_proof(&blind_proof)?);
-    println!("\nBlind proof verified: master {} owns child {}",
-        &blind_proof.master_pubkey[..12], &blind_proof.child_pubkey[..12]);
+    println!(
+        "\nBlind proof verified: master {} owns child {}",
+        &blind_proof.master_pubkey[..12],
+        &blind_proof.child_pubkey[..12]
+    );
 
     let full_proof = heartwood_core::create_full_proof(&root, &social)?;
     assert!(heartwood_core::verify_proof(&full_proof)?);
-    println!("Full proof: purpose={}, index={}",
+    println!(
+        "Full proof: purpose={}, index={}",
         full_proof.purpose.as_deref().unwrap_or("?"),
-        full_proof.index.unwrap_or(0));
+        full_proof.index.unwrap_or(0)
+    );
 
     // --- 5. Recovery ---
     //
