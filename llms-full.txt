@@ -1,0 +1,684 @@
+# Heartwood — Full API Reference
+
+> Nostr private keys are pasted into web apps, stored in browser extensions, and copied to the clipboard. Heartwood keeps them in hardware instead.
+
+Heartwood is an open-source Nostr signing appliance that runs on a Raspberry Pi Zero 2 W (~GBP 32). It holds your master identity in hardware, derives unlimited unlinkable personas via nsec-tree, signs Nostr events via NIP-46 (Nostr Connect), and is reachable from anywhere over Tor. Private keys never leave the device.
+
+Repository: https://github.com/forgesworn/heartwood
+Licence: MIT
+
+For a quick overview, see [llms.txt](./llms.txt).
+
+---
+
+## Table of Contents
+
+1. [Architecture](#architecture)
+2. [heartwood-core API](#heartwood-core-api)
+3. [heartwood-nip46 API](#heartwood-nip46-api)
+4. [heartwood-device HTTP API](#heartwood-device-http-api)
+5. [NIP-46 Wire Protocol](#nip-46-wire-protocol)
+6. [Bunker Sidecar](#bunker-sidecar)
+7. [Security Model](#security-model)
+8. [Deployment](#deployment)
+
+---
+
+## Architecture
+
+Heartwood is a Rust workspace with three crates:
+
+```
+heartwood-core        Pure crypto library (no I/O)
+  ├── root.rs         Master secret creation (mnemonic, nsec, nsec-bytes)
+  ├── derive.rs       HMAC-SHA256 child key derivation
+  ├── persona.rs      Named persona derivation
+  ├── proof.rs        Linkage proofs (blind and full)
+  ├── recover.rs      Key scanning and recovery
+  ├── encoding.rs     bech32 npub/nsec encoding
+  ├── validate.rs     Purpose string validation
+  └── types.rs        TreeRoot, Identity, Persona, LinkageProof, HeartwoodError
+
+heartwood-nip46       NIP-46 protocol types and session management (no I/O)
+  ├── methods.rs      Nip46Request enum, Nip46Response struct
+  ├── permissions.rs  ClientPermissions (kind allowlists, method restrictions, rate limiting)
+  ├── session.rs      ClientSession, SessionManager (expiry, limits)
+  ├── server.rs       HeartwoodServer (request dispatcher, identity cache)
+  └── sign.rs         Nostr event signing (BIP-340 Schnorr)
+
+heartwood-device      Device binary (Tokio, Axum, Tor)
+  ├── main.rs         Entry point
+  ├── web.rs          HTTP API (setup, unlock, lock, status, clients, relays, etc.)
+  ├── storage.rs      Encrypted secret storage (AES-256-GCM + Argon2id)
+  ├── audit.rs        Append-only audit log
+  ├── oled.rs         OLED display driver (SSD1306, stub on non-Pi)
+  └── tor.rs          Tor hidden service management
+```
+
+Data flow: NIP-46 clients → Tor → bunker sidecar (JS) → Nostr relays. The web UI is served by heartwood-device over the local network. The bunker reads the decrypted secret from a tmpfs runtime path after PIN unlock.
+
+---
+
+## heartwood-core API
+
+### Types
+
+```rust
+/// Master tree root. Owns the secret; zeroes on drop.
+pub struct TreeRoot {
+    secret: Zeroizing<[u8; 32]>,     // private, not accessible outside the crate
+    pub master_pubkey: String,        // npub bech32
+}
+
+impl TreeRoot {
+    pub fn destroy(mut self);         // Explicitly zero the secret
+}
+
+/// A derived child identity.
+pub struct Identity {
+    pub npub: String,                 // npub bech32
+    pub private_key: Zeroizing<[u8; 32]>,
+    pub public_key: [u8; 32],
+    pub purpose: String,
+    pub index: u32,
+}
+
+impl Identity {
+    pub fn nsec(&self) -> String;     // Compute bech32 nsec on demand (never stored)
+    pub fn zeroize(&mut self);        // Zero the private key bytes
+}
+
+/// A named persona wrapping an identity.
+pub struct Persona {
+    pub identity: Identity,
+    pub name: String,
+    pub index: u32,
+}
+
+/// A linkage proof (blind or full).
+pub struct LinkageProof {
+    pub master_pubkey: String,        // 64-char lowercase hex
+    pub child_pubkey: String,         // 64-char lowercase hex
+    pub purpose: Option<String>,      // None for blind proofs
+    pub index: Option<u32>,           // None for blind proofs
+    pub attestation: String,          // "nsec-tree:blind:{child_hex}" or "nsec-tree:{purpose}:{index}:{child_hex}"
+    pub signature: String,            // 128-char lowercase hex (BIP-340 Schnorr)
+}
+
+/// Error type for all heartwood-core operations.
+pub enum HeartwoodError {
+    IndexOverflow,
+    InvalidPurpose(String),
+    InvalidMnemonic,
+    InvalidNsec,
+    InvalidNpub,
+    InvalidProof,
+    InvalidScanRange,
+    InvalidPersonaName(String),
+    Derivation(String),
+}
+```
+
+### Constants
+
+```rust
+pub const MAX_INDEX: u32 = 0xFFFF_FFFF;
+pub const DEFAULT_SCAN_RANGE: u32 = 20;
+pub const MAX_SCAN_RANGE: u32 = 10_000;
+pub const DOMAIN_PREFIX: &[u8] = b"nsec-tree\0";
+pub const NSEC_ROOT_LABEL: &[u8] = b"nsec-tree-root";
+pub const MNEMONIC_PATH: &str = "m/44'/1237'/727'/0'/0'";
+```
+
+### Root Creation
+
+```rust
+/// Create a TreeRoot from a BIP-39 mnemonic phrase.
+///
+/// 1. Validate mnemonic → 2. PBKDF2 seed (optional passphrase)
+/// 3. BIP-32 derive at m/44'/1237'/727'/0'/0'
+/// 4. Use private key directly as tree root secret (NO HMAC intermediate)
+pub fn from_mnemonic(mnemonic: &str, passphrase: Option<&str>) -> Result<TreeRoot, HeartwoodError>;
+
+/// Create a TreeRoot from a bech32 nsec string via HMAC intermediate.
+///
+/// tree_root_secret = HMAC-SHA256(key=nsec_bytes, msg="nsec-tree-root")
+/// IMPORTANT: This produces a DIFFERENT root than from_mnemonic. They are not interchangeable.
+pub fn from_nsec(nsec: &str) -> Result<TreeRoot, HeartwoodError>;
+
+/// Create a TreeRoot from raw 32-byte nsec via HMAC intermediate.
+/// Same as from_nsec but accepts raw bytes instead of bech32.
+pub fn from_nsec_bytes(nsec_bytes: &[u8; 32]) -> Result<TreeRoot, HeartwoodError>;
+
+/// Validate an nsec and return its npub (no tree derivation, no HMAC).
+/// Used in bunker mode where the nsec signs directly.
+pub fn npub_from_nsec(nsec: &str) -> Result<String, HeartwoodError>;
+```
+
+### Child Key Derivation
+
+```rust
+/// Derive a child identity from a TreeRoot.
+///
+/// context = b"nsec-tree\0" || purpose_utf8 || 0x00 || index_u32_big_endian
+/// child_secret = HMAC-SHA256(key=root_secret, msg=context)
+///
+/// If the derived scalar exceeds the secp256k1 curve order, the index is
+/// incremented until a valid key is found (extremely rare).
+pub fn derive(root: &TreeRoot, purpose: &str, index: u32) -> Result<Identity, HeartwoodError>;
+
+/// Derive a child identity from an existing identity (arbitrary depth).
+///
+/// Creates a transient TreeRoot from the identity's private key using
+/// create_tree_root directly (no HMAC intermediate), then derives a child.
+pub fn derive_from_identity(
+    identity: &Identity,
+    purpose: &str,
+    index: u32,
+) -> Result<Identity, HeartwoodError>;
+```
+
+### Persona Derivation
+
+```rust
+/// Derive a named persona: purpose = "nostr:persona:{name}".
+///
+/// If index is None, defaults to 0.
+pub fn derive_persona(
+    root: &TreeRoot,
+    name: &str,
+    index: Option<u32>,
+) -> Result<Persona, HeartwoodError>;
+
+/// Derive a sub-identity from an existing persona.
+pub fn derive_from_persona(
+    root: &TreeRoot,
+    persona: &Persona,
+    purpose: &str,
+    index: u32,
+) -> Result<Identity, HeartwoodError>;
+```
+
+### Linkage Proofs
+
+```rust
+/// Create a blind proof (does not reveal purpose or index).
+///
+/// attestation = "nsec-tree:blind:{child_pubkey_hex}"
+/// signature = BIP-340 Schnorr sign(master_secret, SHA256(attestation))
+pub fn create_blind_proof(
+    root: &TreeRoot,
+    child: &Identity,
+) -> Result<LinkageProof, HeartwoodError>;
+
+/// Create a full proof (reveals purpose and index).
+///
+/// attestation = "nsec-tree:{purpose}:{index}:{child_pubkey_hex}"
+/// signature = BIP-340 Schnorr sign(master_secret, SHA256(attestation))
+pub fn create_full_proof(
+    root: &TreeRoot,
+    child: &Identity,
+) -> Result<LinkageProof, HeartwoodError>;
+
+/// Verify a linkage proof. Returns true if the signature is valid.
+pub fn verify_proof(proof: &LinkageProof) -> Result<bool, HeartwoodError>;
+```
+
+### Recovery
+
+```rust
+/// Scan derived keys across multiple purposes to find existing identities.
+///
+/// For each purpose, derives keys at indices 0..scan_range and returns any
+/// that produce valid secp256k1 keys. Default scan range: 20. Max: 10,000.
+pub fn recover(
+    root: &TreeRoot,
+    purposes: &[String],
+    scan_range: Option<u32>,
+) -> Result<std::collections::BTreeMap<String, Vec<Identity>>, HeartwoodError>;
+```
+
+### Encoding
+
+```rust
+pub fn encode_npub(pubkey: &[u8; 32]) -> String;   // → "npub1..."
+pub fn encode_nsec(seckey: &[u8; 32]) -> String;   // → "nsec1..."
+pub fn decode_npub(npub: &str) -> Result<[u8; 32], HeartwoodError>;
+pub fn decode_nsec(nsec: &str) -> Result<Zeroizing<[u8; 32]>, HeartwoodError>;
+```
+
+### Purpose Validation
+
+```rust
+/// Validate a purpose string. Rules:
+/// - Non-empty, max 256 bytes
+/// - No null bytes (0x00) or pipe characters (|)
+/// - Not whitespace-only
+pub fn validate_purpose(purpose: &str) -> Result<(), HeartwoodError>;
+```
+
+---
+
+## heartwood-nip46 API
+
+### Request Types
+
+```rust
+pub enum Nip46Request {
+    // Standard NIP-46 methods
+    GetPublicKey,
+    SignEvent(Vec<Value>),         // params: [event_json]
+    Nip44Encrypt(Vec<Value>),     // params: [peer_pubkey, plaintext]
+    Nip44Decrypt(Vec<Value>),     // params: [peer_pubkey, ciphertext]
+    Nip04Encrypt(Vec<Value>),     // params: [peer_pubkey, plaintext] (deprecated)
+    Nip04Decrypt(Vec<Value>),     // params: [peer_pubkey, ciphertext] (deprecated)
+
+    // Heartwood extensions (require explicit opt-in)
+    HeartwoodDerive(Vec<Value>),          // params: [purpose, index?]
+    HeartwoodDerivePersona(Vec<Value>),   // params: [name, index?]
+    HeartwoodListIdentities,              // no params
+    HeartwoodSwitch(Vec<Value>),          // params: [target, index_hint?]
+    HeartwoodCreateProof(Vec<Value>),     // params: [proof_type?]  ("blind" | "full")
+    HeartwoodVerifyProof(Vec<Value>),     // params: [proof_json]
+    HeartwoodRecover(Vec<Value>),         // params: [lookahead?]
+}
+```
+
+### Response Type
+
+```rust
+pub struct Nip46Response { /* fields private */ }
+
+impl Nip46Response {
+    /// Construct a successful response. Rejects if result contains nsec material.
+    pub fn ok(id: impl Into<String>, result: Value) -> Self;
+
+    /// Construct an error response.
+    pub fn err(id: impl Into<String>, message: impl Into<String>) -> Self;
+
+    pub fn id(&self) -> &str;
+    pub fn result(&self) -> Option<&Value>;
+    pub fn error(&self) -> Option<&str>;
+}
+```
+
+The `Nip46Response::ok()` constructor recursively scans the result JSON for any string starting with `nsec1`. If found, it returns an error response instead, preventing private key leakage through the protocol layer.
+
+### Permissions
+
+```rust
+pub struct ClientPermissions {
+    pub allowed_kinds: Option<HashSet<u32>>,      // None = all kinds
+    pub allowed_methods: Option<HashSet<String>>,  // None = standard methods only
+    pub rate_limit: u32,                           // default: 60 req/min
+}
+
+impl ClientPermissions {
+    pub fn can_sign_kind(&self, kind: u32) -> bool;
+    pub fn can_call_method(&self, method: &str) -> bool;
+    pub fn check_rate_limit(&mut self) -> bool;
+}
+```
+
+**Privileged methods** (require explicit opt-in via `allowed_methods`):
+- `heartwood_derive`
+- `heartwood_derive_persona`
+- `heartwood_switch`
+- `heartwood_create_proof`
+- `heartwood_recover`
+
+**Always allowed** (standard NIP-46 + read-only extensions):
+- `get_public_key`, `sign_event`, `nip44_encrypt`, `nip44_decrypt`, `nip04_encrypt`, `nip04_decrypt`
+- `heartwood_list_identities`, `heartwood_verify_proof`
+
+### Session Management
+
+```rust
+pub struct ClientSession {
+    pub client_pubkey: String,
+    pub permissions: ClientPermissions,
+    pub connected_at: Instant,
+}
+
+impl ClientSession {
+    pub fn new(client_pubkey: impl Into<String>) -> Option<Self>;  // Validates hex pubkey
+    pub fn touch(&mut self);           // Update last-active
+    pub fn is_expired(&self) -> bool;  // 10-minute idle timeout
+}
+
+pub struct SessionManager { /* ... */ }
+
+impl SessionManager {
+    pub fn add(&mut self, session: ClientSession) -> bool;   // false if at max (32)
+    pub fn get(&self, pubkey: &str) -> Option<&ClientSession>;
+    pub fn get_mut(&mut self, pubkey: &str) -> Option<&mut ClientSession>;
+    pub fn remove(&mut self, pubkey: &str) -> Option<ClientSession>;
+    pub fn list(&self) -> Vec<&str>;
+    pub fn active_count(&self) -> usize;
+}
+```
+
+### Server
+
+```rust
+pub struct HeartwoodServer { /* ... */ }
+
+impl HeartwoodServer {
+    pub fn new() -> Self;
+    pub fn with_root(root: TreeRoot) -> Self;
+
+    /// Dispatch a NIP-46 request:
+    /// 1. Check root loaded → 2. Create/look up session → 3. Touch + rate limit
+    /// 4. Check method permission → 5. Dispatch to handler
+    pub fn handle_request(
+        &mut self,
+        request_id: &str,
+        client_pubkey: &str,
+        request: Nip46Request,
+    ) -> Nip46Response;
+}
+```
+
+---
+
+## heartwood-device HTTP API
+
+All endpoints are served by the Axum HTTP server on port 3000 (configurable via `HEARTWOOD_BIND` env var). Authentication is HTTP Basic Auth (if a device password is set). A lock middleware blocks most endpoints when the device is locked.
+
+### Lock-exempt endpoints (work when locked)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/` | Serve the bundled web UI |
+| GET | `/api/status` | Device status (setup/lock state, version) |
+| POST | `/api/unlock` | Decrypt master secret with PIN |
+| POST | `/api/set-pin` | Encrypt legacy plaintext secret with a PIN |
+| POST | `/api/setup` | Initial device setup |
+
+### Locked endpoints (require PIN unlock first)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/lock` | Clear decrypted secret, re-lock device |
+| POST | `/api/reset` | Wipe stored secret, return to setup mode |
+| GET/POST | `/api/relays` | Get/set relay list |
+| GET | `/api/bunker` | Get bunker URI |
+| POST | `/api/password` | Set/change device password |
+| POST | `/api/tor` | Enable/disable Tor |
+| GET | `/api/audit` | Get audit log entries |
+| GET | `/api/clients` | List approved/pending NIP-46 clients |
+| POST | `/api/clients/approve` | Approve a pending client |
+| POST | `/api/clients/revoke` | Revoke an approved client |
+
+### Endpoint Details
+
+#### `GET /api/status`
+
+Returns JSON with the current device state. The response varies:
+
+**Setup required** (no master secret):
+```json
+{ "status": "running", "version": "0.1.0", "setup_required": true, "has_password": false, "tor_enabled": false, "relays": [...] }
+```
+
+**Encryption required** (legacy plaintext secret):
+```json
+{ "status": "running", "version": "0.1.0", "setup_required": false, "encryption_required": true, ... }
+```
+
+**Locked** (encrypted, PIN not entered):
+```json
+{ "status": "running", "version": "0.1.0", "setup_required": false, "locked": true, ... }
+```
+
+**Unlocked** (fully operational):
+```json
+{ "status": "running", "version": "0.1.0", "setup_required": false, "locked": false, "mode": "bunker", "npub": "npub1...", "bunker_uri": "bunker://...", ... }
+```
+
+#### `POST /api/setup`
+
+```json
+{
+  "mode": "bunker" | "tree-mnemonic" | "tree-nsec",
+  "nsec": "nsec1...",           // required for bunker and tree-nsec
+  "mnemonic": "word1 word2 ...", // required for tree-mnemonic
+  "passphrase": "optional",     // optional for tree-mnemonic
+  "pin": "1234"                  // required, 4-8 digits
+}
+```
+
+Encrypts the secret with AES-256-GCM keyed from the PIN via Argon2id before saving. Device is unlocked after setup.
+
+#### `POST /api/unlock`
+
+```json
+{ "pin": "1234" }
+```
+
+Decrypts the master secret. Returns 403 on wrong PIN (authenticated encryption catches it). Writes decrypted payload to tmpfs runtime path for the bunker sidecar.
+
+#### `POST /api/set-pin`
+
+```json
+{ "pin": "1234", "confirm": "1234" }
+```
+
+Migrates a legacy plaintext `master.secret` to encrypted format. Only works when the stored secret is not already encrypted.
+
+#### `POST /api/lock`
+
+No body. Clears the decrypted secret from memory and removes the runtime payload file.
+
+#### `POST /api/reset`
+
+```json
+{ "password": "device-password" }
+```
+
+Zero-overwrites the master secret file, then removes it. Requires current device password.
+
+#### `POST /api/clients/approve`
+
+```json
+{ "pubkey": "64-char-hex", "allowed_kinds": [1, 7] }
+```
+
+`allowed_kinds` is optional. If omitted, client may sign all kinds.
+
+### Encrypted Storage Format
+
+On-disk format of `master.secret`:
+
+```
+[version: 1 byte (0x01)]
+[salt: 16 bytes]
+[nonce: 12 bytes]
+[ciphertext + GCM tag: variable]
+```
+
+Key derivation: `key = Argon2id(PIN, salt)` with default parameters (m=19456 KiB, t=2, p=1).
+
+Encryption: AES-256-GCM with the derived key and random nonce. The GCM tag (16 bytes) is appended to the ciphertext, providing authenticated encryption — a wrong PIN produces a decryption failure, not garbage output.
+
+---
+
+## NIP-46 Wire Protocol
+
+Heartwood implements the standard NIP-46 remote signing protocol plus extension methods.
+
+### Standard Methods
+
+| Method | Params | Response |
+|--------|--------|----------|
+| `get_public_key` | none | `"npub1..."` |
+| `sign_event` | `[event_json]` | `"{signed_event_json}"` |
+| `nip44_encrypt` | `[peer_pubkey, plaintext]` | `"ciphertext"` |
+| `nip44_decrypt` | `[peer_pubkey, ciphertext]` | `"plaintext"` |
+| `nip04_encrypt` | `[peer_pubkey, plaintext]` | not implemented (deprecated) |
+| `nip04_decrypt` | `[peer_pubkey, ciphertext]` | not implemented (deprecated) |
+
+### Heartwood Extension Methods
+
+| Method | Params | Response | Privileged |
+|--------|--------|----------|:----------:|
+| `heartwood_derive` | `[purpose, index?]` | `{ npub, purpose, index }` | Yes |
+| `heartwood_derive_persona` | `[name, index?]` | `{ npub, purpose, index, personaName }` | Yes |
+| `heartwood_list_identities` | none | `[{ npub, purpose, index, personaName? }, ...]` | No |
+| `heartwood_switch` | `[target, index_hint?]` | `{ npub }` | Yes |
+| `heartwood_create_proof` | `[proof_type?]` | `{ masterPubkey, childPubkey, attestation, signature, purpose?, index? }` | Yes |
+| `heartwood_verify_proof` | `[proof_json]` | `true` or `false` | No |
+| `heartwood_recover` | `[lookahead?]` | `[{ npub, purpose, index }, ...]` | Yes |
+
+`heartwood_switch` target can be: `"master"` (reset to root), an exact npub, a persona name, or a purpose string with optional index hint.
+
+All NIP-46 messages are NIP-44 encrypted end-to-end between client and bunker.
+
+---
+
+## Bunker Sidecar
+
+The bunker sidecar (`bunker/index.mjs`) is a standalone Node.js daemon that:
+
+1. Reads the decrypted secret from `/run/heartwood/master.payload` (or legacy `master.secret`)
+2. Generates a bunker keypair for relay communication
+3. Subscribes to NIP-46 requests (kind 24133) on configured relays
+4. Enforces client allowlists and per-client rate limits
+5. Signs events with the user's nsec and returns encrypted responses
+
+### Rate Limiting
+
+Default: 30 requests per minute per client. Configurable per client via `rateLimit` field in `clients.json`:
+
+```json
+{
+  "ab12...": {
+    "allowedKinds": [1, 7],
+    "rateLimit": 10,
+    "approvedAt": "1711900000"
+  }
+}
+```
+
+`connect` and `ping` are exempt from rate limiting.
+
+### Bunker URI Format
+
+```
+bunker://{bunker_pubkey}?relay=wss://relay1&relay=wss://relay2
+```
+
+Written to `/var/lib/heartwood/bunker-uri.txt` on startup.
+
+---
+
+## Security Model
+
+### Key Material
+
+- Master secret stored encrypted (AES-256-GCM + Argon2id) on disk
+- PIN (4-8 digits) is the encryption key source — never stored
+- Decrypted secret held in process memory only while unlocked
+- Runtime payload written to tmpfs (`/run/heartwood/`) — RAM-backed, cleared on reboot
+- All secret material uses `zeroize::Zeroizing<[u8; 32]>` for deterministic zeroing on drop
+- `TreeRoot::secret()` is `pub(crate)` — raw secret cannot escape heartwood-core
+
+### Protocol Layer
+
+- Nsec filtering: `Nip46Response::ok()` recursively scans results for `nsec1` strings, replacing with an error if found
+- Debug redaction: both `Nip46Request` and `Nip46Response` implement custom `Debug` that redacts params/results
+- Session expiry: 10-minute idle timeout, max 32 concurrent sessions
+- Method permissions: privileged Heartwood extensions require explicit client opt-in
+- Per-client kind restrictions on `sign_event`
+- Per-client rate limiting (60 req/min in Rust server, 30 req/min in JS bunker)
+
+### Device Layer
+
+- Device password hashed with Argon2id (constant-time verify, transparent migration from plaintext)
+- Storage files: 0600 permissions (owner-only), 0700 directories
+- Secure deletion: zero-overwrite before unlinking
+- No CORS (same-origin only)
+- Lock middleware: 423 Locked response for most endpoints when PIN not entered
+- Audit log: append-only JSON lines, 1 MiB cap, 0600 permissions
+- Tor hidden service: no clearnet exposure
+
+### Client Management
+
+- New NIP-46 clients recorded as pending, require approval via web UI
+- Approved clients stored in `clients.json` with optional kind restrictions
+- Clients can be revoked (removed from allowlist)
+- Client file reloaded on filesystem change (no bunker restart needed)
+
+---
+
+## Deployment
+
+### Quick Start
+
+```bash
+git clone https://github.com/forgesworn/heartwood
+cd heartwood
+cargo build --release -p heartwood-device
+```
+
+### Cross-compile for Raspberry Pi
+
+```bash
+cargo install cross
+cross build --release --target aarch64-unknown-linux-gnu -p heartwood-device
+```
+
+### Pi Setup
+
+```bash
+cd pi && sudo bash setup.sh
+```
+
+This installs the binary, creates `/var/lib/heartwood/`, sets up systemd services (`heartwood.service`, `heartwood-bunker.service`), and configures Tor.
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `HEARTWOOD_BIND` | `0.0.0.0:3000` | HTTP server bind address |
+| `RUST_LOG` | (none) | Tracing filter (e.g. `info`, `heartwood_device=debug`) |
+
+### Systemd
+
+```ini
+[Unit]
+Description=Heartwood signing appliance
+After=network.target tor.service
+
+[Service]
+ExecStart=/usr/local/bin/heartwood-device
+Restart=always
+User=heartwood
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/heartwood /run/heartwood
+NoNewPrivileges=true
+```
+
+### File Paths
+
+| Path | Contents |
+|------|----------|
+| `/var/lib/heartwood/master.secret` | Encrypted master secret (AES-256-GCM blob) |
+| `/var/lib/heartwood/config.json` | Device config (password hash, relay list, tor toggle) |
+| `/var/lib/heartwood/bunker.key` | Bunker keypair (hex) |
+| `/var/lib/heartwood/bunker-uri.txt` | Bunker connection URI |
+| `/var/lib/heartwood/clients.json` | Approved NIP-46 clients |
+| `/var/lib/heartwood/pending-clients.json` | Pending client connection attempts |
+| `/var/lib/heartwood/audit.log` | Audit log (JSON lines) |
+| `/run/heartwood/master.payload` | Decrypted secret (tmpfs, only while unlocked) |
+
+---
+
+## Ecosystem
+
+- [nsec-tree](https://github.com/forgesworn/nsec-tree) — TypeScript reference implementation (136 tests, frozen vectors)
+- [shamir-words](https://github.com/forgesworn/shamir-words) — Mnemonic threshold backup splitting
+- [canary-kit](https://github.com/forgesworn/canary-kit) — Dead man's switch (pairs with Heartwood duress persona)
+- [bray](https://github.com/forgesworn/bray) — Nostr MCP server (AI agents sign through Heartwood)
+- [toll-booth](https://github.com/forgesworn/toll-booth) — L402 API payments (per-service signing identities)

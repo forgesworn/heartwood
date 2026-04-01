@@ -118,7 +118,10 @@ Heartwood routes all NIP-46 traffic through Tor. Connect via the `.onion` addres
 - Tor hidden service -- no clearnet exposure, no IP address, no port forwarding
 - Audit log persisted to disk as append-only JSON lines (1 MiB cap with rotation, 0600 permissions)
 - No cross-origin API access (CORS removed; all UI requests are same-origin)
-- 91 tests including frozen protocol vectors cross-validated against TypeScript reference implementation
+- AES-256-GCM encrypted storage with Argon2id key derivation from device PIN
+- Per-client rate limiting in both Rust server (60 req/min) and JS bunker (30 req/min)
+- Lock middleware: 423 response on most endpoints until PIN unlock
+- 64 tests including frozen protocol vectors cross-validated against TypeScript reference implementation
 
 ## Competitors
 
@@ -138,6 +141,8 @@ Heartwood routes all NIP-46 traffic through Tor. Connect via the `.onion` addres
 - [bray](https://github.com/forgesworn/bray) — Nostr MCP server (AI agents sign through Heartwood)
 
 ## Source
+
+For the full API reference, see [llms-full.txt](./llms-full.txt).
 
 Repository: https://github.com/forgesworn/heartwood
 Licence: MIT
