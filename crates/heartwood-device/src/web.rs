@@ -670,6 +670,9 @@ struct RelayUpdate {
 }
 
 /// `POST /api/relays` — update the relay list.
+///
+/// Also recomputes the bunker URI file so the web UI reflects the new relays
+/// immediately, without waiting for the bunker sidecar's file watcher.
 async fn api_set_relays(
     State(state): State<Arc<AppState>>,
     axum::Json(req): axum::Json<RelayUpdate>,
@@ -700,6 +703,8 @@ async fn api_set_relays(
     match save_config_key(&storage, "relays", json!(relays)) {
         Ok(()) => {
             info!("Relay list updated: {} relays", relays.len());
+            // Recompute the bunker URI so the web UI picks up the change immediately
+            rewrite_bunker_uri(&relays);
             (StatusCode::OK, axum::Json(json!({ "relays": relays })))
         }
         Err(e) => {
@@ -710,6 +715,70 @@ async fn api_set_relays(
             )
         }
     }
+}
+
+/// Rewrite the bunker URI file with updated relays.
+///
+/// Reads the existing `bunker-uri.txt` to extract the bunker pubkey, then
+/// rebuilds the URI with the new relay list. The bunker sidecar will also
+/// recompute this when its config file watcher fires, but writing it here
+/// ensures the web UI sees the update immediately.
+fn rewrite_bunker_uri(relays: &[String]) {
+    const BUNKER_URI_PATH: &str = "/var/lib/heartwood/bunker-uri.txt";
+
+    // Parse the existing URI to extract the bunker public key
+    let existing = match std::fs::read_to_string(BUNKER_URI_PATH) {
+        Ok(s) => s.trim().to_string(),
+        Err(_) => return, // bunker not running yet — nothing to rewrite
+    };
+
+    let bunker_pk = match parse_bunker_pubkey(&existing) {
+        Some(pk) => pk,
+        None => return,
+    };
+
+    let uri = build_bunker_uri(bunker_pk, relays);
+
+    if let Err(e) =
+        storage::write_secret_file(std::path::Path::new(BUNKER_URI_PATH), uri.as_bytes())
+    {
+        tracing::warn!("Could not rewrite bunker URI: {e}");
+    }
+}
+
+/// Extract the bunker pubkey from a bunker URI string.
+///
+/// Returns `None` if the URI is malformed or the pubkey is not a valid 64-char hex string.
+fn parse_bunker_pubkey(uri: &str) -> Option<&str> {
+    let rest = uri.strip_prefix("bunker://")?;
+    let pk = rest.split('?').next().unwrap_or("");
+    if pk.len() == 64 && pk.chars().all(|c| c.is_ascii_hexdigit()) {
+        Some(pk)
+    } else {
+        None
+    }
+}
+
+/// Build a bunker URI from a hex pubkey and relay list.
+fn build_bunker_uri(pubkey: &str, relays: &[String]) -> String {
+    let relay_params: String = relays
+        .iter()
+        .map(|r| {
+            // Percent-encode the relay URL for use as a query parameter
+            let encoded: String = r
+                .bytes()
+                .map(|b| match b {
+                    b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                        String::from(b as char)
+                    }
+                    _ => format!("%{b:02X}"),
+                })
+                .collect();
+            format!("relay={encoded}")
+        })
+        .collect::<Vec<_>>()
+        .join("&");
+    format!("bunker://{pubkey}?{relay_params}")
 }
 
 /// `GET /api/bunker` — return the bunker URI if the bunker sidecar has written one.
@@ -976,4 +1045,75 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
         .layer(DefaultBodyLimit::max(65536))
         .with_state(state)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const FAKE_PK: &str = "ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12cd34ef56ab12";
+
+    #[test]
+    fn parse_bunker_pubkey_extracts_valid_key() {
+        let uri = format!("bunker://{FAKE_PK}?relay=wss%3A%2F%2Frelay.damus.io");
+        assert_eq!(parse_bunker_pubkey(&uri), Some(FAKE_PK));
+    }
+
+    #[test]
+    fn parse_bunker_pubkey_no_query_string() {
+        let uri = format!("bunker://{FAKE_PK}");
+        assert_eq!(parse_bunker_pubkey(&uri), Some(FAKE_PK));
+    }
+
+    #[test]
+    fn parse_bunker_pubkey_rejects_bad_prefix() {
+        assert_eq!(parse_bunker_pubkey("nostr://abc"), None);
+    }
+
+    #[test]
+    fn parse_bunker_pubkey_rejects_short_key() {
+        assert_eq!(parse_bunker_pubkey("bunker://abc123?relay=wss://x"), None);
+    }
+
+    #[test]
+    fn parse_bunker_pubkey_rejects_non_hex() {
+        let bad = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz";
+        let uri = format!("bunker://{bad}?relay=wss://x");
+        assert_eq!(parse_bunker_pubkey(&uri), None);
+    }
+
+    #[test]
+    fn build_bunker_uri_single_relay() {
+        let relays = vec!["wss://relay.damus.io".to_string()];
+        let uri = build_bunker_uri(FAKE_PK, &relays);
+        assert_eq!(uri, format!("bunker://{FAKE_PK}?relay=wss%3A%2F%2Frelay.damus.io"));
+    }
+
+    #[test]
+    fn build_bunker_uri_multiple_relays() {
+        let relays = vec!["wss://relay.damus.io".to_string(), "wss://nos.lol".to_string()];
+        let uri = build_bunker_uri(FAKE_PK, &relays);
+        assert!(uri.starts_with(&format!("bunker://{FAKE_PK}?")));
+        assert!(uri.contains("relay=wss%3A%2F%2Frelay.damus.io"));
+        assert!(uri.contains("relay=wss%3A%2F%2Fnos.lol"));
+        // Relays joined by &
+        assert!(uri.contains("&relay="));
+    }
+
+    #[test]
+    fn build_bunker_uri_preserves_relay_order() {
+        let relays = vec!["wss://first.relay".to_string(), "wss://second.relay".to_string()];
+        let uri = build_bunker_uri(FAKE_PK, &relays);
+        let first_pos = uri.find("first").unwrap();
+        let second_pos = uri.find("second").unwrap();
+        assert!(first_pos < second_pos, "relay order must be preserved");
+    }
+
+    #[test]
+    fn build_bunker_uri_round_trips_through_parse() {
+        let relays = vec!["wss://relay.damus.io".to_string()];
+        let uri = build_bunker_uri(FAKE_PK, &relays);
+        // The pubkey should be extractable from the built URI
+        assert_eq!(parse_bunker_pubkey(&uri), Some(FAKE_PK));
+    }
 }
