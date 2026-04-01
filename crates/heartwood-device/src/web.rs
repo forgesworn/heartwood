@@ -1000,6 +1000,27 @@ async fn api_revoke_client(axum::Json(req): axum::Json<RevokeClient>) -> impl In
     (StatusCode::OK, axum::Json(json!({"status": "revoked", "pubkey": req.pubkey})))
 }
 
+/// `POST /api/clients/clear` — remove all approved and pending clients.
+async fn api_clear_clients() -> impl IntoResponse {
+    let empty = json!({});
+    if let Err(e) = write_clients_file("/var/lib/heartwood/clients.json", &empty) {
+        tracing::error!("Failed to clear clients.json: {e}");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            axum::Json(json!({"error": "failed to clear approved clients"})),
+        );
+    }
+    if let Err(e) = write_clients_file("/var/lib/heartwood/pending-clients.json", &empty) {
+        tracing::error!("Failed to clear pending-clients.json: {e}");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            axum::Json(json!({"error": "failed to clear pending clients"})),
+        );
+    }
+    info!("Cleared all clients (approved and pending)");
+    (StatusCode::OK, axum::Json(json!({"ok": true})))
+}
+
 /// Load a JSON file from the filesystem, returning an empty object if missing or malformed.
 fn load_clients_file(path: &str) -> serde_json::Value {
     std::fs::read_to_string(path)
@@ -1062,6 +1083,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/clients", get(api_get_clients))
         .route("/api/clients/approve", post(api_approve_client))
         .route("/api/clients/revoke", post(api_revoke_client))
+        .route("/api/clients/clear", post(api_clear_clients))
         .layer(middleware::from_fn_with_state(state.clone(), lock_middleware))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
         .layer(DefaultBodyLimit::max(65536))

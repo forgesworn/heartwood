@@ -259,6 +259,7 @@
             <div id="pending-clients"></div>
             <div id="approved-clients"></div>
             <div id="clients-msg" class="hidden" style="margin-top:0.5rem;"></div>
+            <button class="btn btn-danger" id="clear-all-clients" style="display:none; margin-top:0.75rem; width:auto; padding:0.45rem 1rem;" onclick="clearAllClients()">Clear all clients</button>
         </div>
 
         <!-- PASSWORD CONFIG -->
@@ -688,6 +689,10 @@
             const pendingKeys = Object.keys(pending);
             const approvedKeys = Object.keys(approved);
 
+            // Show the "Clear all" button only when there are clients
+            const clearBtn = document.getElementById('clear-all-clients');
+            clearBtn.style.display = (pendingKeys.length + approvedKeys.length > 0) ? '' : 'none';
+
             if (pendingKeys.length > 0) {
                 pendingEl.innerHTML = '<p style="font-size:0.85rem; color:#c90; margin-bottom:0.5rem;">Awaiting approval:</p>' +
                     pendingKeys.map(pk => {
@@ -769,6 +774,30 @@
                 const data = await res.json();
                 if (res.ok) {
                     msgEl.textContent = 'Client revoked';
+                    msgEl.className = 'msg msg-ok';
+                    setTimeout(() => msgEl.className = 'hidden', 2000);
+                    loadClients();
+                } else {
+                    msgEl.textContent = data.error;
+                    msgEl.className = 'msg msg-err';
+                }
+            } catch (e) {
+                msgEl.textContent = 'Connection failed';
+                msgEl.className = 'msg msg-err';
+            }
+        }
+
+        async function clearAllClients() {
+            if (!confirm('Are you sure? This will remove all approved and pending clients.')) return;
+            const msgEl = document.getElementById('clients-msg');
+            try {
+                const res = await fetch('/api/clients/clear', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    msgEl.textContent = 'All clients cleared';
                     msgEl.className = 'msg msg-ok';
                     setTimeout(() => msgEl.className = 'hidden', 2000);
                     loadClients();
