@@ -5,11 +5,16 @@ set -euo pipefail
 
 echo "=== Heartwood Pi Setup ==="
 
-# Create heartwood user
+# Create heartwood user and add to debian-tor group (for reading .onion address)
 sudo useradd -r -s /usr/sbin/nologin heartwood || true
-sudo mkdir -p /var/lib/heartwood
-sudo chown heartwood:heartwood /var/lib/heartwood
+sudo usermod -aG debian-tor heartwood 2>/dev/null || true
+sudo mkdir -p /var/lib/heartwood /run/heartwood
+sudo chown heartwood:heartwood /var/lib/heartwood /run/heartwood
 sudo chmod 700 /var/lib/heartwood
+# Allow heartwood to traverse the Tor hidden service dir (read hostname)
+if [ -d /var/lib/tor/heartwood ]; then
+    sudo chmod 710 /var/lib/tor/heartwood
+fi
 
 # Install heartwood binary
 if [ -f "../target/release/heartwood-device" ]; then

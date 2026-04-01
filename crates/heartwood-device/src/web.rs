@@ -125,7 +125,8 @@ async fn api_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
             "locked": true,
             "has_password": has_password,
             "tor_enabled": tor_enabled,
-            "relays": relays
+            "relays": relays,
+            "onion_address": read_onion_address()
         }));
     }
 
