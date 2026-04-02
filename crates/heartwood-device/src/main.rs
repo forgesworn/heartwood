@@ -24,18 +24,34 @@ async fn main() {
 
     oled.show_text("HEARTWOOD");
 
-    if !storage.has_master_secret() {
-        oled.show_text("SETUP MODE");
-        info!("No master secret found. Entering setup mode.");
-    } else {
-        info!("Master secret stored. Device locked until PIN is entered.");
-        oled.show_text("LOCKED");
+    // Check for existing runtime payload (survives service restarts).
+    // If present, resume unlocked state without requiring PIN.
+    let cached_payload = {
+        let payload_path = data_path.join("master.payload");
+        match std::fs::read_to_string(&payload_path) {
+            Ok(p) if !p.trim().is_empty() => {
+                info!("Resuming unlocked state from cached payload");
+                oled.show_text("UNLOCKED");
+                Some(zeroize::Zeroizing::new(p.trim().to_string()))
+            }
+            _ => None,
+        }
+    };
+
+    if cached_payload.is_none() {
+        if !storage.has_master_secret() {
+            oled.show_text("SETUP MODE");
+            info!("No master secret found. Entering setup mode.");
+        } else {
+            info!("Master secret stored. Device locked until PIN is entered.");
+            oled.show_text("LOCKED");
+        }
     }
 
     let state = Arc::new(web::AppState {
         audit_log: Mutex::new(audit_log),
         storage: Mutex::new(storage),
-        decrypted_payload: Mutex::new(None),
+        decrypted_payload: Mutex::new(cached_payload),
         unlock_throttle: Mutex::new(web::UnlockThrottle::new()),
         data_dir: data_path,
     });
