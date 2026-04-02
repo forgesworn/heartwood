@@ -1016,7 +1016,7 @@ async fn auth_middleware(
 
 /// Default relays for new installations.
 const DEFAULT_RELAYS: &[&str] =
-    &["wss://relay.damus.io", "wss://relay.nostr.band", "wss://nos.lol", "wss://relay.trotters.cc"];
+    &["wss://relay.damus.io", "wss://nos.lol", "wss://relay.trotters.cc"];
 
 /// Load relay list from config, or return defaults.
 fn load_relays(storage: &Storage) -> Vec<String> {

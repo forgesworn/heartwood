@@ -6,15 +6,18 @@
 #   ./setup.sh                          # install system deps + code only
 #   ./setup.sh --instance personal      # also create a named instance
 #   ./setup.sh --instance personal --port 3000
+#   ./setup.sh --deploy                 # update binary + bunker + restart all instances
 set -euo pipefail
 
 INSTANCE=""
 PORT=""
+DEPLOY=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --instance) INSTANCE="$2"; shift 2 ;;
     --port) PORT="$2"; shift 2 ;;
+    --deploy) DEPLOY=true; shift ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
@@ -87,12 +90,43 @@ EOF
     echo "  Instance $INSTANCE started"
 fi
 
+# --- Deploy mode: update binary + bunker + restart running instances ---
+if [ "$DEPLOY" = true ]; then
+    echo ""
+    echo "=== Deploying update ==="
+
+    # Find all active heartwood instances and restart them.
+    # Restarting the device service automatically restarts the bunker (PartOf=).
+    RUNNING=$(systemctl list-units 'heartwood@*.service' --plain --no-legend --state=active | awk '{print $1}')
+    if [ -z "$RUNNING" ]; then
+        echo "No running instances found."
+    else
+        for unit in $RUNNING; do
+            echo "Restarting $unit ..."
+            sudo systemctl restart "$unit"
+        done
+        # Give the device services a moment to bind their ports
+        sleep 2
+        echo "All instances restarted."
+    fi
+
+    echo ""
+    echo "=== Deploy complete ==="
+    echo ""
+    echo "View logs:"
+    echo "  sudo journalctl -u 'heartwood@*' -u 'heartwood-bunker@*' -f"
+    exit 0
+fi
+
 echo ""
 echo "=== Heartwood installed ==="
 echo ""
 echo "Create instances with:"
 echo "  ./setup.sh --instance personal --port 3000"
 echo "  ./setup.sh --instance forgesworn --port 3001"
+echo ""
+echo "Update a running installation:"
+echo "  ./setup.sh --deploy"
 echo ""
 echo "Or manually:"
 echo "  sudo mkdir -p /var/lib/heartwood/<name>"

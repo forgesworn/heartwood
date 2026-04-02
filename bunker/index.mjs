@@ -52,7 +52,6 @@ if (authorizedKeys.size > 0) {
 const DATA_DIR = resolveDataDir(process.env)
 const DEFAULT_RELAYS = [
   'wss://relay.damus.io',
-  'wss://relay.nostr.band',
   'wss://nos.lol',
   'wss://relay.trotters.cc',
 ]

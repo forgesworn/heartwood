@@ -3,6 +3,7 @@ Description=Heartwood NIP-46 bunker (%i)
 After=network-online.target heartwood@%i.service
 Wants=network-online.target
 Requires=heartwood@%i.service
+PartOf=heartwood@%i.service
 StartLimitBurst=5
 StartLimitIntervalSec=60
 
