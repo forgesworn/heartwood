@@ -2,6 +2,7 @@
 //! Axum HTTP server providing the Heartwood local web UI.
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use axum::{
     extract::{DefaultBodyLimit, Request, State},
@@ -15,6 +16,7 @@ use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::Mutex;
 use tracing::info;
+use zeroize::Zeroize;
 
 use argon2::Argon2;
 use password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
@@ -24,6 +26,57 @@ use crate::audit::AuditLog;
 use crate::storage;
 use crate::storage::Storage;
 
+/// Tracks failed PIN unlock attempts and enforces exponential backoff.
+pub struct UnlockThrottle {
+    /// Number of consecutive failed attempts.
+    failed_attempts: u32,
+    /// When the lockout expires (if any).
+    lockout_until: Option<Instant>,
+}
+
+impl UnlockThrottle {
+    pub fn new() -> Self {
+        Self { failed_attempts: 0, lockout_until: None }
+    }
+
+    /// Check if an unlock attempt is allowed. Returns `Err(seconds_remaining)`
+    /// if still locked out.
+    fn check(&self) -> Result<(), u64> {
+        if let Some(until) = self.lockout_until {
+            let now = Instant::now();
+            if now < until {
+                let remaining = (until - now).as_secs() + 1;
+                return Err(remaining);
+            }
+        }
+        Ok(())
+    }
+
+    /// Record a failed attempt and set the lockout duration.
+    fn record_failure(&mut self) {
+        self.failed_attempts += 1;
+        // Exponential backoff: 2s, 4s, 8s, 16s, 30s, 60s, 120s, 300s (cap)
+        let delay_secs = match self.failed_attempts {
+            0..=2 => 0,
+            3..=4 => 2u64.pow(self.failed_attempts - 2),
+            5..=7 => 30,
+            8..=10 => 60,
+            11..=15 => 120,
+            _ => 300,
+        };
+        if delay_secs > 0 {
+            self.lockout_until =
+                Some(Instant::now() + std::time::Duration::from_secs(delay_secs));
+        }
+    }
+
+    /// Reset the counter after a successful unlock.
+    fn reset(&mut self) {
+        self.failed_attempts = 0;
+        self.lockout_until = None;
+    }
+}
+
 /// Shared application state for all HTTP handlers.
 pub struct AppState {
     pub audit_log: Mutex<AuditLog>,
@@ -31,6 +84,8 @@ pub struct AppState {
     /// Decrypted master secret payload, held in memory while unlocked.
     /// `None` when locked or no secret exists.
     pub decrypted_payload: Mutex<Option<String>>,
+    /// PIN unlock brute-force throttle.
+    pub unlock_throttle: Mutex<UnlockThrottle>,
 }
 
 /// Serve the bundled `index.html`.
@@ -283,13 +338,15 @@ async fn api_setup(
 
 #[derive(Deserialize)]
 struct ResetRequest {
-    password: String,
+    password: Option<String>,
+    /// Required as proof of ownership when no password is set.
+    pin: Option<String>,
 }
 
 /// `POST /api/reset` — wipe stored secret and return to setup mode.
 ///
-/// Requires the current device password in the POST body as a secondary
-/// confirmation, since this operation destroys the master secret.
+/// Requires either the current device password or the device PIN as proof
+/// of ownership, since this operation destroys the master secret.
 async fn api_reset(
     State(state): State<Arc<AppState>>,
     axum::Json(req): axum::Json<ResetRequest>,
@@ -300,30 +357,65 @@ async fn api_reset(
         return (StatusCode::OK, axum::Json(json!({"status": "already in setup mode"})));
     }
 
-    // Verify password before allowing reset
+    // Verify identity: password if set, PIN otherwise
     let stored = load_password(&storage);
     match stored {
         Some(stored) => {
+            let password = match &req.password {
+                Some(p) => p.as_str(),
+                None => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        axum::Json(json!({"error": "password required for reset"})),
+                    );
+                }
+            };
             let valid = if is_hashed(&stored) {
-                verify_password(&req.password, &stored)
+                verify_password(password, &stored)
             } else {
-                req.password == stored
+                password == stored
             };
             if !valid {
                 return (StatusCode::FORBIDDEN, axum::Json(json!({"error": "incorrect password"})));
             }
         }
         None => {
-            // No password set — should not happen in practice since auth_middleware
-            // would allow unauthenticated access, but handle gracefully.
+            // No password set — require PIN as proof of ownership
+            let pin = match &req.pin {
+                Some(p) => p.as_str(),
+                None => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        axum::Json(json!({"error": "pin required for reset (no password set)"})),
+                    );
+                }
+            };
+            // Verify the PIN by attempting decryption
+            let bytes = match storage.load_master_secret() {
+                Ok(b) => b,
+                Err(_) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        axum::Json(json!({"error": "failed to read secret"})),
+                    );
+                }
+            };
+            if storage::is_encrypted(&bytes) && storage::decrypt_with_pin(pin, &bytes).is_err() {
+                return (StatusCode::FORBIDDEN, axum::Json(json!({"error": "incorrect PIN"})));
+            }
         }
     }
 
     match storage.delete_master_secret() {
         Ok(()) => {
             drop(storage);
-            // Clear the cached decrypted payload and runtime file
-            *state.decrypted_payload.lock().await = None;
+            // Zeroize and clear the cached decrypted payload and runtime file
+            let mut guard = state.decrypted_payload.lock().await;
+            if let Some(ref mut payload) = *guard {
+                unsafe { payload.as_bytes_mut() }.zeroize();
+            }
+            *guard = None;
+            drop(guard);
             remove_runtime_payload();
             info!("Device reset. Returning to setup mode.");
             (StatusCode::OK, axum::Json(json!({"status": "reset complete"})))
@@ -377,10 +469,26 @@ struct UnlockRequest {
 ///
 /// The PIN is used to derive the AES-256-GCM key via Argon2id. If the PIN is
 /// wrong, authenticated decryption fails and the endpoint returns 403.
+///
+/// Exponential backoff is enforced after consecutive failures to prevent
+/// brute-force attacks on the 4–8 digit PIN.
 async fn api_unlock(
     State(state): State<Arc<AppState>>,
     axum::Json(req): axum::Json<UnlockRequest>,
 ) -> impl IntoResponse {
+    // Check brute-force throttle before doing any work
+    {
+        let throttle = state.unlock_throttle.lock().await;
+        if let Err(secs) = throttle.check() {
+            return (
+                StatusCode::TOO_MANY_REQUESTS,
+                axum::Json(json!({
+                    "error": format!("too many failed attempts — try again in {secs}s")
+                })),
+            );
+        }
+    }
+
     let storage = state.storage.lock().await;
 
     if !storage.has_master_secret() {
@@ -410,20 +518,34 @@ async fn api_unlock(
     }
 
     match storage::decrypt_with_pin(&req.pin, &bytes) {
-        Ok(plaintext) => {
+        Ok(mut plaintext) => {
             let payload = String::from_utf8_lossy(&plaintext).to_string();
+            plaintext.zeroize();
             write_runtime_payload(&payload);
             *state.decrypted_payload.lock().await = Some(payload);
+            state.unlock_throttle.lock().await.reset();
             info!("Device unlocked");
             (StatusCode::OK, axum::Json(json!({"status": "unlocked"})))
         }
-        Err(_) => (StatusCode::FORBIDDEN, axum::Json(json!({"error": "incorrect PIN"}))),
+        Err(_) => {
+            state.unlock_throttle.lock().await.record_failure();
+            (StatusCode::FORBIDDEN, axum::Json(json!({"error": "incorrect PIN"})))
+        }
     }
 }
 
 /// `POST /api/lock` — clear the cached decrypted secret from memory.
+///
+/// Zeroises the payload string before dropping to prevent secret material
+/// from lingering in freed heap memory.
 async fn api_lock(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    *state.decrypted_payload.lock().await = None;
+    let mut guard = state.decrypted_payload.lock().await;
+    if let Some(ref mut payload) = *guard {
+        // SAFETY: zeroize the string's heap buffer before drop
+        unsafe { payload.as_bytes_mut() }.zeroize();
+    }
+    *guard = None;
+    drop(guard);
     remove_runtime_payload();
     info!("Device locked");
     axum::Json(json!({"status": "locked"}))
@@ -805,17 +927,57 @@ async fn api_bunker_status() -> impl IntoResponse {
 #[derive(Deserialize)]
 struct PasswordRequest {
     password: String,
+    /// Required when a password is already set.
+    current_password: Option<String>,
 }
+
+/// Maximum password length to prevent Argon2id DoS on resource-constrained Pi.
+const MAX_PASSWORD_LEN: usize = 128;
 
 /// `POST /api/password` — set or change the device password.
 ///
 /// The password is hashed with Argon2id before storage — the plaintext is never persisted.
+/// When a password is already set, `current_password` must be provided and match.
 async fn api_set_password(
     State(state): State<Arc<AppState>>,
     axum::Json(req): axum::Json<PasswordRequest>,
 ) -> impl IntoResponse {
     if req.password.is_empty() {
         return (StatusCode::BAD_REQUEST, axum::Json(json!({"error": "password cannot be empty"})));
+    }
+    if req.password.len() > MAX_PASSWORD_LEN {
+        return (
+            StatusCode::BAD_REQUEST,
+            axum::Json(json!({"error": "password too long (max 128 characters)"})),
+        );
+    }
+
+    // If a password is already set, require the current password for verification
+    let storage_guard = state.storage.lock().await;
+    let existing = load_password(&storage_guard);
+    drop(storage_guard);
+
+    if let Some(stored) = existing {
+        let current = match &req.current_password {
+            Some(p) => p.as_str(),
+            None => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    axum::Json(json!({"error": "current_password required when changing password"})),
+                );
+            }
+        };
+        let valid = if is_hashed(&stored) {
+            verify_password(current, &stored)
+        } else {
+            current == stored
+        };
+        if !valid {
+            return (
+                StatusCode::FORBIDDEN,
+                axum::Json(json!({"error": "incorrect current password"})),
+            );
+        }
     }
 
     let hashed = match hash_password(&req.password) {
@@ -951,7 +1113,10 @@ async fn api_approve_client(axum::Json(req): axum::Json<ApproveClient>) -> impl 
     }
 
     let mut approved = load_clients_file("/var/lib/heartwood/clients.json");
-    let approved_obj = approved.as_object_mut().unwrap();
+    if !approved.is_object() {
+        approved = json!({});
+    }
+    let approved_obj = approved.as_object_mut().expect("just verified is_object");
     let mut entry = json!({ "approvedAt": chrono_now_iso() });
     if let Some(kinds) = &req.allowed_kinds {
         entry["allowedKinds"] = json!(kinds);
@@ -1154,6 +1319,49 @@ mod tests {
         let first_pos = uri.find("first").unwrap();
         let second_pos = uri.find("second").unwrap();
         assert!(first_pos < second_pos, "relay order must be preserved");
+    }
+
+    #[test]
+    fn unlock_throttle_allows_first_attempts() {
+        let throttle = UnlockThrottle::new();
+        assert!(throttle.check().is_ok());
+    }
+
+    #[test]
+    fn unlock_throttle_locks_after_failures() {
+        let mut throttle = UnlockThrottle::new();
+        // First 2 failures: no lockout
+        throttle.record_failure();
+        throttle.record_failure();
+        assert!(throttle.check().is_ok());
+        // 3rd failure triggers backoff
+        throttle.record_failure();
+        assert!(throttle.check().is_err());
+    }
+
+    #[test]
+    fn unlock_throttle_resets_on_success() {
+        let mut throttle = UnlockThrottle::new();
+        for _ in 0..5 {
+            throttle.record_failure();
+        }
+        assert!(throttle.check().is_err());
+        throttle.reset();
+        assert!(throttle.check().is_ok());
+    }
+
+    #[test]
+    fn validate_pin_accepts_valid() {
+        assert!(validate_pin("1234"));
+        assert!(validate_pin("12345678"));
+    }
+
+    #[test]
+    fn validate_pin_rejects_invalid() {
+        assert!(!validate_pin("123"));        // too short
+        assert!(!validate_pin("123456789"));  // too long
+        assert!(!validate_pin("12ab"));       // non-digit
+        assert!(!validate_pin(""));           // empty
     }
 
     #[test]

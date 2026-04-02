@@ -32,6 +32,7 @@ async fn main() {
         audit_log: Mutex::new(audit_log),
         storage: Mutex::new(storage),
         decrypted_payload: Mutex::new(None),
+        unlock_throttle: Mutex::new(web::UnlockThrottle::new()),
     });
     let app = web::create_router(state);
 
