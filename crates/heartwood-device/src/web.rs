@@ -339,7 +339,7 @@ async fn api_setup(
 
     // Cache the decrypted payload so the device starts unlocked after setup
     drop(storage);
-    write_runtime_payload(&payload);
+    write_runtime_payload(&state.data_dir, &payload);
     *state.decrypted_payload.lock().await = Some(zeroize::Zeroizing::new(payload));
 
     info!("Setup complete (mode={}). Pubkey: {npub}", req.mode);
@@ -648,7 +648,7 @@ async fn api_reset(
             // Clear the cached decrypted payload and runtime file.
             // The Zeroizing<String> wrapper zeroes the buffer automatically on drop.
             *state.decrypted_payload.lock().await = None;
-            remove_runtime_payload();
+            remove_runtime_payload(&state.data_dir);
             info!("Device reset. Returning to setup mode.");
             (StatusCode::OK, axum::Json(json!({"status": "reset complete"})))
         }
@@ -664,27 +664,21 @@ async fn api_reset(
 
 // --- PIN / lock management ---
 
-/// Runtime path for the decrypted payload (tmpfs on Linux, never hits disk).
+/// Runtime payload filename (written inside the instance data directory).
 /// The bunker sidecar reads from here after PIN unlock.
-const RUNTIME_PAYLOAD_PATH: &str = "/run/heartwood/master.payload";
+const RUNTIME_PAYLOAD_FILE: &str = "master.payload";
 
-/// Write the decrypted payload to the runtime path so the bunker sidecar can read it.
-fn write_runtime_payload(payload: &str) {
-    let dir = std::path::Path::new(RUNTIME_PAYLOAD_PATH).parent().unwrap();
-    if std::fs::create_dir_all(dir).is_err() {
-        tracing::warn!("Could not create runtime directory {}", dir.display());
-        return;
-    }
-    if let Err(e) =
-        storage::write_secret_file(std::path::Path::new(RUNTIME_PAYLOAD_PATH), payload.as_bytes())
-    {
+/// Write the decrypted payload to the instance data directory.
+fn write_runtime_payload(data_dir: &std::path::Path, payload: &str) {
+    let path = data_dir.join(RUNTIME_PAYLOAD_FILE);
+    if let Err(e) = storage::write_secret_file(&path, payload.as_bytes()) {
         tracing::warn!("Could not write runtime payload: {e}");
     }
 }
 
 /// Remove the runtime payload file (on lock or reset).
-fn remove_runtime_payload() {
-    let _ = std::fs::remove_file(RUNTIME_PAYLOAD_PATH);
+fn remove_runtime_payload(data_dir: &std::path::Path) {
+    let _ = std::fs::remove_file(data_dir.join(RUNTIME_PAYLOAD_FILE));
 }
 
 /// Validate a PIN or passphrase: 4–64 printable ASCII characters.
@@ -767,7 +761,7 @@ async fn api_unlock(
                     );
                 }
             };
-            write_runtime_payload(&payload);
+            write_runtime_payload(&state.data_dir, &payload);
             *state.decrypted_payload.lock().await = Some(zeroize::Zeroizing::new(payload));
             state.unlock_throttle.lock().await.reset();
             info!("Device unlocked");
@@ -787,7 +781,7 @@ async fn api_unlock(
 async fn api_lock(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     // The Zeroizing<String> wrapper zeroes the buffer automatically on drop.
     *state.decrypted_payload.lock().await = None;
-    remove_runtime_payload();
+    remove_runtime_payload(&state.data_dir);
     info!("Device locked");
     axum::Json(json!({"status": "locked"}))
 }
@@ -851,7 +845,7 @@ async fn api_set_pin(
         }
     };
     drop(storage);
-    write_runtime_payload(&payload);
+    write_runtime_payload(&state.data_dir, &payload);
     *state.decrypted_payload.lock().await = Some(zeroize::Zeroizing::new(payload));
 
     info!("Legacy secret encrypted with PIN. Device unlocked.");

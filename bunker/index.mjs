@@ -16,6 +16,7 @@ import { decode as nip19decode } from 'nostr-tools/nip19'
 import { SimplePool } from 'nostr-tools/pool'
 import WebSocket from 'ws'
 import { fromNsec } from 'nsec-tree/core'
+import { fromMnemonic } from 'nsec-tree/mnemonic'
 import { derivePersona } from 'nsec-tree/persona'
 import { bytesToHex } from 'nostr-tools/utils'
 import {
@@ -64,7 +65,7 @@ const DEFAULT_RELAYS = [
 // falls back to the primary path (for legacy unencrypted installations).
 
 const secretPath = `${DATA_DIR}/master.secret`
-const runtimePayloadPath = '/run/heartwood/master.payload'
+const runtimePayloadPath = `${DATA_DIR}/master.payload`
 
 function readSecretPayload() {
   // Try runtime path first (written by heartwood-device after PIN unlock)
@@ -89,23 +90,54 @@ function readSecretPayload() {
 }
 
 const secretPayload = readSecretPayload()
-if (!secretPayload.startsWith('bunker:')) {
-  console.error('FATAL: master.secret is not in bunker mode (expected "bunker:<nsec>")')
+
+// Parse the payload — supports bunker, tree-mnemonic, and tree-nsec modes
+let userSk, userPk, treeRoot
+
+if (secretPayload.startsWith('bunker:')) {
+  const nsec = secretPayload.slice('bunker:'.length)
+  const decoded = nip19decode(nsec)
+  if (decoded.type !== 'nsec') {
+    console.error('FATAL: invalid nsec in master.secret')
+    process.exit(1)
+  }
+  userSk = decoded.data
+  userPk = getPublicKey(userSk)
+  treeRoot = fromNsec(new Uint8Array(userSk))
+} else if (secretPayload.startsWith('tree-mnemonic:')) {
+  // Format: "tree-mnemonic:{passphrase}:{mnemonic}" or "tree-mnemonic::{mnemonic}"
+  const rest = secretPayload.slice('tree-mnemonic:'.length)
+  const colonIdx = rest.indexOf(':')
+  const passphrase = colonIdx > 0 ? rest.slice(0, colonIdx) : undefined
+  const mnemonic = colonIdx >= 0 ? rest.slice(colonIdx + 1) : rest
+  treeRoot = fromMnemonic(mnemonic, passphrase)
+  // Derive master signing key via BIP-32 (same path as heartwood-core)
+  const { mnemonicToSeedSync } = await import('@scure/bip39')
+  const { HDKey } = await import('@scure/bip32')
+  const seed = mnemonicToSeedSync(mnemonic, passphrase || '')
+  const master = HDKey.fromMasterSeed(seed)
+  const child = master.derive("m/44'/1237'/727'/0'/0'")
+  userSk = child.privateKey
+  userPk = getPublicKey(userSk)
+} else if (secretPayload.startsWith('tree-nsec:')) {
+  const nsec = secretPayload.slice('tree-nsec:'.length)
+  const decoded = nip19decode(nsec)
+  if (decoded.type !== 'nsec') {
+    console.error('FATAL: invalid nsec in master.secret (tree-nsec mode)')
+    process.exit(1)
+  }
+  treeRoot = fromNsec(new Uint8Array(decoded.data))
+  // The tree-nsec master key is HMAC-SHA256(nsec_bytes, "nsec-tree-root")
+  // fromNsec already computes this — masterPubkey is the pubkey of that derived key
+  // We need the raw secret for signing, so derive it ourselves
+  const { hmac } = await import('@noble/hashes/hmac')
+  const { sha256 } = await import('@noble/hashes/sha256')
+  userSk = hmac(sha256, new Uint8Array(decoded.data), new TextEncoder().encode('nsec-tree-root'))
+  userPk = getPublicKey(userSk)
+} else {
+  console.error('FATAL: unrecognised master.secret format (expected bunker:, tree-mnemonic:, or tree-nsec:)')
   process.exit(1)
 }
-
-const nsec = secretPayload.slice('bunker:'.length)
-const { type, data: userSk } = nip19decode(nsec)
-if (type !== 'nsec') {
-  console.error('FATAL: invalid nsec in master.secret')
-  process.exit(1)
-}
-
-const userPk = getPublicKey(userSk)
-
-// --- 1b. nsec-tree persona derivation state ---
-
-const treeRoot = fromNsec(new Uint8Array(userSk))
 const personasPath = `${DATA_DIR}/personas.json`
 
 /**
