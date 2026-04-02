@@ -4,8 +4,8 @@ After=network-online.target heartwood@%i.service
 Wants=network-online.target
 Requires=heartwood@%i.service
 PartOf=heartwood@%i.service
-StartLimitBurst=5
-StartLimitIntervalSec=60
+StartLimitBurst=10
+StartLimitIntervalSec=300
 
 [Service]
 Type=simple

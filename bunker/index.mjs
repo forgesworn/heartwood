@@ -67,6 +67,9 @@ const DEFAULT_RELAYS = [
 const secretPath = `${DATA_DIR}/master.secret`
 const runtimePayloadPath = `${DATA_DIR}/master.payload`
 
+const PAYLOAD_POLL_INTERVAL_MS = 5_000
+const PAYLOAD_MAX_WAIT_MS = 300_000 // 5 minutes
+
 function readSecretPayload() {
   // Try runtime path first (written by heartwood-device after PIN unlock)
   if (existsSync(runtimePayloadPath)) {
@@ -81,15 +84,37 @@ function readSecretPayload() {
   const raw = readFileSync(secretPath)
   // Encrypted files start with version byte 0x01 or 0x02 (not valid UTF-8 text prefix)
   if (raw[0] === 0x01 || raw[0] === 0x02) {
-    console.error('FATAL: master.secret is encrypted but device is locked')
-    console.error('       Unlock the device via the web UI, then restart the bunker.')
-    process.exit(1)
+    // Device is locked — return null so caller can wait for unlock
+    return null
   }
 
   return raw.toString('utf-8').trim()
 }
 
-const secretPayload = readSecretPayload()
+/** Wait for the device to be unlocked (polls for master.payload). */
+function waitForPayload() {
+  return new Promise((resolve, reject) => {
+    const started = Date.now()
+    console.log('Device is locked — waiting for unlock...')
+    const timer = setInterval(() => {
+      if (existsSync(runtimePayloadPath)) {
+        clearInterval(timer)
+        resolve(readFileSync(runtimePayloadPath, 'utf-8').trim())
+        return
+      }
+      if (Date.now() - started > PAYLOAD_MAX_WAIT_MS) {
+        clearInterval(timer)
+        reject(new Error('timed out waiting for device unlock'))
+      }
+    }, PAYLOAD_POLL_INTERVAL_MS)
+  })
+}
+
+let secretPayload = readSecretPayload()
+if (secretPayload === null) {
+  secretPayload = await waitForPayload()
+  console.log('Device unlocked — continuing startup')
+}
 
 // Parse the payload — supports bunker, tree-mnemonic, and tree-nsec modes
 let userSk, userPk, treeRoot
