@@ -7,6 +7,8 @@ import {
   recordPending,
   tryAutoApprove,
   checkRateLimit,
+  resolveDataDir,
+  parseAuthorizedKeysEnv,
 } from '../lib.mjs'
 
 // Helpers — 64-char hex pubkeys
@@ -394,6 +396,54 @@ describe('checkRateLimit', () => {
   it('handles limit of 0 — blocks everything', () => {
     clients[PK_A] = { rateLimit: 0 }
     assert.equal(checkRateLimit(PK_A, buckets, clients, 30, 60_000, 10_000), false)
+  })
+})
+
+// ---------- resolveDataDir ----------
+
+describe('resolveDataDir', () => {
+  it('returns env var value when set', () => {
+    assert.equal(resolveDataDir({ HEARTWOOD_DATA_DIR: '/data/personal' }), '/data/personal')
+  })
+
+  it('returns default when env var is missing', () => {
+    assert.equal(resolveDataDir({}), '/var/lib/heartwood')
+  })
+
+  it('returns default when env var is empty string', () => {
+    assert.equal(resolveDataDir({ HEARTWOOD_DATA_DIR: '' }), '/var/lib/heartwood')
+  })
+
+  it('strips trailing slash', () => {
+    assert.equal(resolveDataDir({ HEARTWOOD_DATA_DIR: '/data/personal/' }), '/data/personal')
+  })
+})
+
+// ---------- parseAuthorizedKeysEnv ----------
+
+describe('parseAuthorizedKeysEnv', () => {
+  it('returns empty set when env var is missing', () => {
+    const { keys, warnings } = parseAuthorizedKeysEnv({})
+    assert.equal(keys.size, 0)
+    assert.equal(warnings.length, 0)
+  })
+
+  it('parses comma-separated hex keys from env', () => {
+    const { keys } = parseAuthorizedKeysEnv({ HEARTWOOD_AUTHORIZED_KEYS: `${PK_A},${PK_B}` })
+    assert.equal(keys.size, 2)
+    assert.ok(keys.has(PK_A))
+    assert.ok(keys.has(PK_B))
+  })
+
+  it('warns on invalid keys in env', () => {
+    const { keys, warnings } = parseAuthorizedKeysEnv({ HEARTWOOD_AUTHORIZED_KEYS: `${PK_A},bad` })
+    assert.equal(keys.size, 1)
+    assert.deepEqual(warnings, ['bad'])
+  })
+
+  it('returns empty set when env var is empty string', () => {
+    const { keys } = parseAuthorizedKeysEnv({ HEARTWOOD_AUTHORIZED_KEYS: '' })
+    assert.equal(keys.size, 0)
   })
 })
 
