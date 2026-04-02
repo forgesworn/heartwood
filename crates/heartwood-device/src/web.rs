@@ -16,8 +16,6 @@ use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::Mutex;
 use tracing::info;
-use zeroize::Zeroize;
-
 use argon2::Argon2;
 use password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use rand_core::OsRng;
@@ -82,8 +80,9 @@ pub struct AppState {
     pub audit_log: Mutex<AuditLog>,
     pub storage: Mutex<Storage>,
     /// Decrypted master secret payload, held in memory while unlocked.
-    /// `None` when locked or no secret exists.
-    pub decrypted_payload: Mutex<Option<String>>,
+    /// `None` when locked or no secret exists. Wrapped in `Zeroizing` so
+    /// the backing buffer is automatically zeroed on drop or panic.
+    pub decrypted_payload: Mutex<Option<zeroize::Zeroizing<String>>>,
     /// PIN unlock brute-force throttle.
     pub unlock_throttle: Mutex<UnlockThrottle>,
     /// Instance data directory (read from `HEARTWOOD_DATA_DIR` env var).
@@ -194,7 +193,7 @@ async fn api_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         }));
     }
 
-    let (mode, npub) = parse_payload(payload_guard.as_deref().unwrap_or(""));
+    let (mode, npub) = parse_payload(payload_guard.as_ref().map(|z| z.as_str()).unwrap_or(""));
 
     // Read bunker URI if available
     let bunker_uri = std::fs::read_to_string(state.data_file("bunker-uri.txt"))
@@ -246,9 +245,11 @@ async fn api_setup(
         );
     }
 
-    // Validate PIN: 4–8 digits
-    if req.pin.len() < 4 || req.pin.len() > 8 || !req.pin.chars().all(|c| c.is_ascii_digit()) {
-        return (StatusCode::BAD_REQUEST, axum::Json(json!({"error": "PIN must be 4–8 digits"})));
+    if !validate_pin(&req.pin) {
+        return (
+            StatusCode::BAD_REQUEST,
+            axum::Json(json!({"error": "PIN/passphrase must be 4–64 printable characters"})),
+        );
     }
 
     let (npub, payload) = match req.mode.as_str() {
@@ -339,7 +340,7 @@ async fn api_setup(
     // Cache the decrypted payload so the device starts unlocked after setup
     drop(storage);
     write_runtime_payload(&payload);
-    *state.decrypted_payload.lock().await = Some(payload);
+    *state.decrypted_payload.lock().await = Some(zeroize::Zeroizing::new(payload));
 
     info!("Setup complete (mode={}). Pubkey: {npub}", req.mode);
     (StatusCode::OK, axum::Json(json!({"npub": npub, "mode": req.mode})))
@@ -433,13 +434,9 @@ async fn api_reset(
     match storage.delete_master_secret() {
         Ok(()) => {
             drop(storage);
-            // Zeroize and clear the cached decrypted payload and runtime file
-            let mut guard = state.decrypted_payload.lock().await;
-            if let Some(ref mut payload) = *guard {
-                unsafe { payload.as_bytes_mut() }.zeroize();
-            }
-            *guard = None;
-            drop(guard);
+            // Clear the cached decrypted payload and runtime file.
+            // The Zeroizing<String> wrapper zeroes the buffer automatically on drop.
+            *state.decrypted_payload.lock().await = None;
             remove_runtime_payload();
             info!("Device reset. Returning to setup mode.");
             (StatusCode::OK, axum::Json(json!({"status": "reset complete"})))
@@ -479,9 +476,15 @@ fn remove_runtime_payload() {
     let _ = std::fs::remove_file(RUNTIME_PAYLOAD_PATH);
 }
 
-/// Validate a PIN: must be 4–8 ASCII digits.
+/// Validate a PIN or passphrase: 4–64 printable ASCII characters.
+///
+/// Accepts digits (legacy 4–8 digit PINs) and alphanumeric passphrases
+/// for stronger offline attack resistance.
 fn validate_pin(pin: &str) -> bool {
-    pin.len() >= 4 && pin.len() <= 8 && pin.chars().all(|c| c.is_ascii_digit())
+    pin.len() >= 4
+        && pin.len() <= 64
+        && pin.chars().all(|c| c.is_ascii_graphic() || c == ' ')
+        && !pin.trim().is_empty()
 }
 
 #[derive(Deserialize)]
@@ -542,20 +545,19 @@ async fn api_unlock(
     }
 
     match storage::decrypt_with_pin(&req.pin, &bytes) {
-        Ok(mut plaintext) => {
-            let payload = match String::from_utf8(plaintext.clone()) {
-                Ok(s) => s,
+        Ok(plaintext) => {
+            let payload = match std::str::from_utf8(&plaintext) {
+                Ok(s) => s.to_string(),
                 Err(_) => {
-                    plaintext.zeroize();
+                    // plaintext is Zeroizing<Vec<u8>> — auto-zeroed on drop
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         axum::Json(json!({"error": "decrypted payload is not valid UTF-8"})),
                     );
                 }
             };
-            plaintext.zeroize();
             write_runtime_payload(&payload);
-            *state.decrypted_payload.lock().await = Some(payload);
+            *state.decrypted_payload.lock().await = Some(zeroize::Zeroizing::new(payload));
             state.unlock_throttle.lock().await.reset();
             info!("Device unlocked");
             (StatusCode::OK, axum::Json(json!({"status": "unlocked"})))
@@ -572,13 +574,8 @@ async fn api_unlock(
 /// Zeroises the payload string before dropping to prevent secret material
 /// from lingering in freed heap memory.
 async fn api_lock(State(state): State<Arc<AppState>>) -> impl IntoResponse {
-    let mut guard = state.decrypted_payload.lock().await;
-    if let Some(ref mut payload) = *guard {
-        // SAFETY: zeroize the string's heap buffer before drop
-        unsafe { payload.as_bytes_mut() }.zeroize();
-    }
-    *guard = None;
-    drop(guard);
+    // The Zeroizing<String> wrapper zeroes the buffer automatically on drop.
+    *state.decrypted_payload.lock().await = None;
     remove_runtime_payload();
     info!("Device locked");
     axum::Json(json!({"status": "locked"}))
@@ -633,10 +630,18 @@ async fn api_set_pin(
     }
 
     // Cache the decrypted payload — device is now unlocked
-    let payload = String::from_utf8_lossy(&bytes).to_string();
+    let payload = match String::from_utf8(bytes) {
+        Ok(s) => s,
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(json!({"error": "stored payload is not valid UTF-8"})),
+            );
+        }
+    };
     drop(storage);
     write_runtime_payload(&payload);
-    *state.decrypted_payload.lock().await = Some(payload);
+    *state.decrypted_payload.lock().await = Some(zeroize::Zeroizing::new(payload));
 
     info!("Legacy secret encrypted with PIN. Device unlocked.");
     (StatusCode::OK, axum::Json(json!({"status": "encrypted and unlocked"})))
@@ -1403,16 +1408,19 @@ mod tests {
 
     #[test]
     fn validate_pin_accepts_valid() {
-        assert!(validate_pin("1234"));
-        assert!(validate_pin("12345678"));
+        assert!(validate_pin("1234"));           // 4-digit PIN
+        assert!(validate_pin("12345678"));       // 8-digit PIN
+        assert!(validate_pin("myPassphrase1"));  // alphanumeric
+        assert!(validate_pin("correct horse battery staple")); // passphrase with spaces
+        assert!(validate_pin("P@ss!w0rd#2024")); // symbols
     }
 
     #[test]
     fn validate_pin_rejects_invalid() {
         assert!(!validate_pin("123"));        // too short
-        assert!(!validate_pin("123456789"));  // too long
-        assert!(!validate_pin("12ab"));       // non-digit
         assert!(!validate_pin(""));           // empty
+        assert!(!validate_pin("   "));        // whitespace only
+        assert!(!validate_pin(&"a".repeat(65))); // too long
     }
 
     #[test]

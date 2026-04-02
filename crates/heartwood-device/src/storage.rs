@@ -42,13 +42,19 @@ impl std::fmt::Display for EncryptionError {
 
 impl std::error::Error for EncryptionError {}
 
-/// Derive a 256-bit key from a PIN and salt using Argon2id.
+/// Derive a 256-bit key from a PIN/passphrase and salt using Argon2id.
 ///
-/// Uses the default Argon2id parameters (m=19456 KiB, t=2, p=1) which are
-/// reasonable for a Raspberry Pi Zero 2 W with 512 MB RAM.
+/// Parameters: m=65536 KiB (64 MiB), t=3, p=1. Chosen for a Pi Zero 2 W
+/// (512 MB RAM): 64 MiB per derivation is feasible while making offline
+/// brute-force significantly harder than the library defaults (19 MiB, t=2).
 fn derive_key(pin: &str, salt: &[u8]) -> Zeroizing<[u8; KEY_LEN]> {
     let mut key = Zeroizing::new([0u8; KEY_LEN]);
-    Argon2::default()
+    let argon2 = Argon2::new(
+        argon2::Algorithm::Argon2id,
+        argon2::Version::V0x13,
+        argon2::Params::new(65536, 3, 1, Some(KEY_LEN)).expect("valid Argon2 params"),
+    );
+    argon2
         .hash_password_into(pin.as_bytes(), salt, key.as_mut())
         .expect("Argon2id key derivation failed");
     key
@@ -82,7 +88,7 @@ pub fn encrypt_with_pin(pin: &str, plaintext: &[u8]) -> Vec<u8> {
 /// Returns the plaintext on success, or an error if the PIN is wrong or the
 /// blob is corrupt/truncated.
 #[allow(deprecated)] // Nonce::from_slice — aes-gcm 0.10 uses generic-array 0.x
-pub fn decrypt_with_pin(pin: &str, blob: &[u8]) -> Result<Vec<u8>, EncryptionError> {
+pub fn decrypt_with_pin(pin: &str, blob: &[u8]) -> Result<Zeroizing<Vec<u8>>, EncryptionError> {
     if blob.len() < MIN_ENCRYPTED_LEN {
         return Err(EncryptionError::InvalidFormat);
     }
@@ -97,7 +103,7 @@ pub fn decrypt_with_pin(pin: &str, blob: &[u8]) -> Result<Vec<u8>, EncryptionErr
     let key = derive_key(pin, salt);
     let cipher = Aes256Gcm::new_from_slice(key.as_ref()).expect("key length mismatch");
     let nonce = Nonce::from_slice(nonce_bytes);
-    cipher.decrypt(nonce, ciphertext).map_err(|_| EncryptionError::DecryptionFailed)
+    cipher.decrypt(nonce, ciphertext).map(Zeroizing::new).map_err(|_| EncryptionError::DecryptionFailed)
 }
 
 /// Returns `true` if the data looks like an encrypted blob (starts with version byte).
@@ -227,7 +233,7 @@ mod tests {
         let plaintext = b"bunker:nsec1abc123";
         let blob = encrypt_with_pin(pin, plaintext);
         let decrypted = decrypt_with_pin(pin, &blob).expect("decryption failed");
-        assert_eq!(decrypted, plaintext);
+        assert_eq!(&*decrypted, plaintext);
     }
 
     #[test]
@@ -278,8 +284,8 @@ mod tests {
         // Different random salt and nonce each time
         assert_ne!(blob1, blob2);
         // But both decrypt to the same plaintext
-        assert_eq!(decrypt_with_pin(pin, &blob1).unwrap(), plaintext);
-        assert_eq!(decrypt_with_pin(pin, &blob2).unwrap(), plaintext);
+        assert_eq!(&*decrypt_with_pin(pin, &blob1).unwrap(), plaintext);
+        assert_eq!(&*decrypt_with_pin(pin, &blob2).unwrap(), plaintext);
     }
 
     #[test]
@@ -298,7 +304,7 @@ mod tests {
         assert!(is_encrypted(&loaded));
 
         let decrypted = decrypt_with_pin(pin, &loaded).unwrap();
-        assert_eq!(decrypted, payload);
+        assert_eq!(&*decrypted, payload);
 
         storage.delete_master_secret().unwrap();
         assert!(!storage.has_master_secret());
