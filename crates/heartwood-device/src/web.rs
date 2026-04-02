@@ -750,7 +750,7 @@ async fn api_unlock(
     }
 
     match storage::decrypt_with_pin(&req.pin, &bytes) {
-        Ok(plaintext) => {
+        Ok((plaintext, version)) => {
             let payload = match std::str::from_utf8(&plaintext) {
                 Ok(s) => s.to_string(),
                 Err(_) => {
@@ -761,6 +761,18 @@ async fn api_unlock(
                     );
                 }
             };
+
+            // Transparently migrate V1 → V2 (stronger KDF params)
+            if storage::needs_migration(version) {
+                let upgraded = storage::encrypt_with_pin(&req.pin, plaintext.as_ref());
+                let storage = state.storage.lock().await;
+                if let Err(e) = storage.save_master_secret(&upgraded) {
+                    tracing::warn!("KDF migration failed (non-fatal): {e}");
+                } else {
+                    info!("Migrated master secret from V{version} to V2 KDF params");
+                }
+            }
+
             write_runtime_payload(&state.data_dir, &payload);
             *state.decrypted_payload.lock().await = Some(zeroize::Zeroizing::new(payload));
             state.unlock_throttle.lock().await.reset();

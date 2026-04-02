@@ -18,6 +18,7 @@ use zeroize::Zeroizing;
 // --- Encryption at rest (AES-256-GCM + Argon2id) ---
 
 const ENCRYPTION_V1: u8 = 0x01;
+const ENCRYPTION_V2: u8 = 0x02;
 const SALT_LEN: usize = 16;
 const NONCE_LEN: usize = 12;
 const KEY_LEN: usize = 32;
@@ -44,16 +45,16 @@ impl std::error::Error for EncryptionError {}
 
 /// Derive a 256-bit key from a PIN/passphrase and salt using Argon2id.
 ///
-/// Parameters: m=65536 KiB (64 MiB), t=3, p=1. Chosen for a Pi Zero 2 W
-/// (512 MB RAM): 64 MiB per derivation is feasible while making offline
-/// brute-force significantly harder than the library defaults (19 MiB, t=2).
-fn derive_key(pin: &str, salt: &[u8]) -> Zeroizing<[u8; KEY_LEN]> {
+/// V1: m=19456 KiB (19 MiB), t=2, p=1 — original library defaults.
+/// V2: m=65536 KiB (64 MiB), t=3, p=1 — stronger params for Pi Zero 2 W.
+fn derive_key(pin: &str, salt: &[u8], version: u8) -> Zeroizing<[u8; KEY_LEN]> {
     let mut key = Zeroizing::new([0u8; KEY_LEN]);
-    let argon2 = Argon2::new(
-        argon2::Algorithm::Argon2id,
-        argon2::Version::V0x13,
-        argon2::Params::new(65536, 3, 1, Some(KEY_LEN)).expect("valid Argon2 params"),
-    );
+    let params = match version {
+        ENCRYPTION_V1 => argon2::Params::new(19456, 2, 1, Some(KEY_LEN)),
+        _ => argon2::Params::new(65536, 3, 1, Some(KEY_LEN)),
+    }
+    .expect("valid Argon2 params");
+    let argon2 = Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
     argon2
         .hash_password_into(pin.as_bytes(), salt, key.as_mut())
         .expect("Argon2id key derivation failed");
@@ -62,7 +63,8 @@ fn derive_key(pin: &str, salt: &[u8]) -> Zeroizing<[u8; KEY_LEN]> {
 
 /// Encrypt plaintext with AES-256-GCM keyed from a PIN via Argon2id.
 ///
-/// On-disk format: `[version 1B][salt 16B][nonce 12B][ciphertext + GCM tag]`
+/// Always writes the latest version (V2). On-disk format:
+/// `[version 1B][salt 16B][nonce 12B][ciphertext + GCM tag]`
 #[allow(deprecated)] // Nonce::from_slice — aes-gcm 0.10 uses generic-array 0.x
 pub fn encrypt_with_pin(pin: &str, plaintext: &[u8]) -> Vec<u8> {
     let mut salt = [0u8; SALT_LEN];
@@ -70,13 +72,13 @@ pub fn encrypt_with_pin(pin: &str, plaintext: &[u8]) -> Vec<u8> {
     let mut nonce_bytes = [0u8; NONCE_LEN];
     OsRng.fill_bytes(&mut nonce_bytes);
 
-    let key = derive_key(pin, &salt);
+    let key = derive_key(pin, &salt, ENCRYPTION_V2);
     let cipher = Aes256Gcm::new_from_slice(key.as_ref()).expect("key length mismatch");
     let nonce = Nonce::from_slice(&nonce_bytes);
     let ciphertext = cipher.encrypt(nonce, plaintext).expect("AES-GCM encryption failed");
 
     let mut blob = Vec::with_capacity(1 + SALT_LEN + NONCE_LEN + ciphertext.len());
-    blob.push(ENCRYPTION_V1);
+    blob.push(ENCRYPTION_V2);
     blob.extend_from_slice(&salt);
     blob.extend_from_slice(&nonce_bytes);
     blob.extend_from_slice(&ciphertext);
@@ -85,14 +87,15 @@ pub fn encrypt_with_pin(pin: &str, plaintext: &[u8]) -> Vec<u8> {
 
 /// Decrypt a blob produced by [`encrypt_with_pin`].
 ///
-/// Returns the plaintext on success, or an error if the PIN is wrong or the
-/// blob is corrupt/truncated.
+/// Returns the plaintext and the version byte that was used. Callers can
+/// check `needs_migration(version)` to decide whether to re-encrypt.
 #[allow(deprecated)] // Nonce::from_slice — aes-gcm 0.10 uses generic-array 0.x
-pub fn decrypt_with_pin(pin: &str, blob: &[u8]) -> Result<Zeroizing<Vec<u8>>, EncryptionError> {
+pub fn decrypt_with_pin(pin: &str, blob: &[u8]) -> Result<(Zeroizing<Vec<u8>>, u8), EncryptionError> {
     if blob.len() < MIN_ENCRYPTED_LEN {
         return Err(EncryptionError::InvalidFormat);
     }
-    if blob[0] != ENCRYPTION_V1 {
+    let version = blob[0];
+    if version != ENCRYPTION_V1 && version != ENCRYPTION_V2 {
         return Err(EncryptionError::InvalidFormat);
     }
 
@@ -100,18 +103,27 @@ pub fn decrypt_with_pin(pin: &str, blob: &[u8]) -> Result<Zeroizing<Vec<u8>>, En
     let nonce_bytes = &blob[1 + SALT_LEN..1 + SALT_LEN + NONCE_LEN];
     let ciphertext = &blob[1 + SALT_LEN + NONCE_LEN..];
 
-    let key = derive_key(pin, salt);
+    let key = derive_key(pin, salt, version);
     let cipher = Aes256Gcm::new_from_slice(key.as_ref()).expect("key length mismatch");
     let nonce = Nonce::from_slice(nonce_bytes);
-    cipher.decrypt(nonce, ciphertext).map(Zeroizing::new).map_err(|_| EncryptionError::DecryptionFailed)
+    cipher
+        .decrypt(nonce, ciphertext)
+        .map(|pt| (Zeroizing::new(pt), version))
+        .map_err(|_| EncryptionError::DecryptionFailed)
 }
 
-/// Returns `true` if the data looks like an encrypted blob (starts with version byte).
+/// Returns `true` if the blob was encrypted with an older KDF version.
+pub fn needs_migration(version: u8) -> bool {
+    version < ENCRYPTION_V2
+}
+
+/// Returns `true` if the data looks like an encrypted blob (starts with a known version byte).
 ///
 /// Plaintext legacy files start with ASCII text (`bunker:`, `tree-mnemonic:`, `tree-nsec:`),
-/// so checking the first byte against the version marker is sufficient.
+/// so checking the first byte against the version markers is sufficient.
 pub fn is_encrypted(data: &[u8]) -> bool {
-    data.first() == Some(&ENCRYPTION_V1) && data.len() >= MIN_ENCRYPTED_LEN
+    matches!(data.first(), Some(&ENCRYPTION_V1) | Some(&ENCRYPTION_V2))
+        && data.len() >= MIN_ENCRYPTED_LEN
 }
 
 /// Filesystem-backed storage for secrets and configuration.
@@ -232,8 +244,39 @@ mod tests {
         let pin = "1234";
         let plaintext = b"bunker:nsec1abc123";
         let blob = encrypt_with_pin(pin, plaintext);
-        let decrypted = decrypt_with_pin(pin, &blob).expect("decryption failed");
+        assert_eq!(blob[0], ENCRYPTION_V2, "new blobs must use V2");
+        let (decrypted, version) = decrypt_with_pin(pin, &blob).expect("decryption failed");
         assert_eq!(&*decrypted, plaintext);
+        assert_eq!(version, ENCRYPTION_V2);
+        assert!(!needs_migration(version));
+    }
+
+    #[test]
+    fn v1_blob_decrypts_and_flags_migration() {
+        // Simulate a V1 blob by encrypting with V1 params directly.
+        let pin = "1234";
+        let plaintext = b"bunker:nsec1abc123";
+
+        let mut salt = [0u8; SALT_LEN];
+        OsRng.fill_bytes(&mut salt);
+        let mut nonce_bytes = [0u8; NONCE_LEN];
+        OsRng.fill_bytes(&mut nonce_bytes);
+
+        let key = derive_key(pin, &salt, ENCRYPTION_V1);
+        let cipher = Aes256Gcm::new_from_slice(key.as_ref()).unwrap();
+        let nonce = Nonce::from_slice(&nonce_bytes);
+        let ciphertext = cipher.encrypt(nonce, &plaintext[..]).unwrap();
+
+        let mut blob = Vec::with_capacity(1 + SALT_LEN + NONCE_LEN + ciphertext.len());
+        blob.push(ENCRYPTION_V1);
+        blob.extend_from_slice(&salt);
+        blob.extend_from_slice(&nonce_bytes);
+        blob.extend_from_slice(&ciphertext);
+
+        let (decrypted, version) = decrypt_with_pin(pin, &blob).expect("V1 decryption failed");
+        assert_eq!(&*decrypted, plaintext);
+        assert_eq!(version, ENCRYPTION_V1);
+        assert!(needs_migration(version));
     }
 
     #[test]
@@ -264,6 +307,14 @@ mod tests {
     }
 
     #[test]
+    fn is_encrypted_detects_v1_blob() {
+        // A blob starting with 0x01 and long enough is detected
+        let mut blob = vec![ENCRYPTION_V1; MIN_ENCRYPTED_LEN];
+        blob[0] = ENCRYPTION_V1;
+        assert!(is_encrypted(&blob));
+    }
+
+    #[test]
     fn is_encrypted_rejects_plaintext() {
         assert!(!is_encrypted(b"bunker:nsec1abc123"));
         assert!(!is_encrypted(b"tree-mnemonic::abandon ability"));
@@ -284,8 +335,8 @@ mod tests {
         // Different random salt and nonce each time
         assert_ne!(blob1, blob2);
         // But both decrypt to the same plaintext
-        assert_eq!(&*decrypt_with_pin(pin, &blob1).unwrap(), plaintext);
-        assert_eq!(&*decrypt_with_pin(pin, &blob2).unwrap(), plaintext);
+        assert_eq!(&*decrypt_with_pin(pin, &blob1).unwrap().0, plaintext);
+        assert_eq!(&*decrypt_with_pin(pin, &blob2).unwrap().0, plaintext);
     }
 
     #[test]
@@ -303,7 +354,7 @@ mod tests {
         let loaded = storage.load_master_secret().unwrap();
         assert!(is_encrypted(&loaded));
 
-        let decrypted = decrypt_with_pin(pin, &loaded).unwrap();
+        let (decrypted, _) = decrypt_with_pin(pin, &loaded).unwrap();
         assert_eq!(&*decrypted, payload);
 
         storage.delete_master_secret().unwrap();

@@ -79,8 +79,8 @@ function readSecretPayload() {
   }
 
   const raw = readFileSync(secretPath)
-  // Encrypted files start with version byte 0x01 (not valid UTF-8 text prefix)
-  if (raw[0] === 0x01) {
+  // Encrypted files start with version byte 0x01 or 0x02 (not valid UTF-8 text prefix)
+  if (raw[0] === 0x01 || raw[0] === 0x02) {
     console.error('FATAL: master.secret is encrypted but device is locked')
     console.error('       Unlock the device via the web UI, then restart the bunker.')
     process.exit(1)
