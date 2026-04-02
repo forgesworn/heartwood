@@ -683,6 +683,12 @@
             return pk.slice(0, 8) + '\u2026' + pk.slice(-6);
         }
 
+        function escapeHtml(s) {
+            const el = document.createElement('span');
+            el.textContent = s;
+            return el.innerHTML;
+        }
+
         function renderClients(approved, pending) {
             const pendingEl = document.getElementById('pending-clients');
             const approvedEl = document.getElementById('approved-clients');
@@ -700,13 +706,15 @@
                         const parts = [];
                         if (info.attempts) parts.push(info.attempts + ' attempt' + (info.attempts > 1 ? 's' : ''));
                         if (info.firstSeen) parts.push('first seen ' + formatTimestamp(info.firstSeen));
-                        const meta = parts.join(' \u00b7 ');
+                        const meta = escapeHtml(parts.join(' \u00b7 '));
+                        const safePk = escapeHtml(truncatePk(pk));
+                        const safeId = escapeHtml(pk.slice(0,12));
                         return `<div class="client-card pending">
-                            <div class="client-pubkey">${truncatePk(pk)}</div>
+                            <div class="client-pubkey">${safePk}</div>
                             ${meta ? `<div class="client-meta">${meta}</div>` : ''}
                             <div class="client-actions">
-                                <input type="text" placeholder="Label (e.g. NostrHub)" id="label-${pk.slice(0,12)}">
-                                <button class="btn-sm btn-save" onclick="approveClient('${pk}')">Approve</button>
+                                <input type="text" placeholder="Label (e.g. NostrHub)" id="label-${safeId}">
+                                <button class="btn-sm btn-save" onclick="approveClient('${escapeHtml(pk)}')">Approve</button>
                             </div>
                         </div>`;
                     }).join('');
@@ -718,15 +726,16 @@
                 approvedEl.innerHTML = '<p style="font-size:0.85rem; color:#1a6b35; margin-top:0.75rem; margin-bottom:0.5rem;">Approved:</p>' +
                     approvedKeys.map(pk => {
                         const info = approved[pk];
-                        const label = info.label || '';
-                        const meta = info.approvedAt ? 'approved ' + formatTimestamp(info.approvedAt) : '';
+                        const label = escapeHtml(info.label || '');
+                        const meta = info.approvedAt ? 'approved ' + escapeHtml(formatTimestamp(info.approvedAt)) : '';
+                        const safePk = escapeHtml(truncatePk(pk));
                         return `<div class="client-card approved" style="display:flex; align-items:center; gap:0.5rem;">
                             <div style="flex:1; min-width:0;">
                                 ${label ? `<div class="client-label">${label}</div>` : ''}
-                                <div class="client-pubkey">${truncatePk(pk)}</div>
+                                <div class="client-pubkey">${safePk}</div>
                                 ${meta ? `<div class="client-meta">${meta}</div>` : ''}
                             </div>
-                            <button class="relay-rm" onclick="revokeClient('${pk}')" title="Revoke">&times;</button>
+                            <button class="relay-rm" onclick="revokeClient('${escapeHtml(pk)}')" title="Revoke">&times;</button>
                         </div>`;
                     }).join('');
             } else {
