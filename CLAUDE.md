@@ -19,6 +19,8 @@ The workspace has three crates:
 | `cargo clippy --all-targets` | Lint |
 | `cargo fmt` | Format |
 | `cargo deny check` | Dependency audit |
+| `cd bunker && npm test` | Bunker unit tests (56 tests) |
+| `node tools/derive-client-key.mjs` | Derive NIP-46 client key from nsec-tree |
 
 Cross-compile for Pi: `cross build --release --target aarch64-unknown-linux-gnu -p heartwood-device`
 
@@ -55,11 +57,16 @@ crates/
       oled.rs                 OLED display driver (SSD1306)
 bunker/
   index.mjs                   NIP-46 bunker sidecar (Node.js)
+  lib.mjs                     Pure logic functions (testable, no I/O)
+  test/lib.test.mjs           Bunker unit tests (56 tests)
   package.json                Bunker dependencies (nostr-tools, nsec-tree, ws)
+tools/
+  derive-client-key.mjs       Standalone CLI for persistent NIP-46 client keys
+  package.json                Tool dependencies (nsec-tree, nostr-tools)
 pi/
-  setup.sh                    Pi deployment script
-  heartwood.service           systemd unit (Rust binary)
-  heartwood-bunker.service    systemd unit (Node.js bunker sidecar)
+  setup.sh                    Pi deployment script (multi-instance)
+  heartwood@.service          systemd template (Rust device)
+  heartwood-bunker@.service   systemd template (Node.js bunker)
   torrc                       Tor hidden service config
 web/
   index.html                  Bundled web UI (served by heartwood-device)
@@ -89,6 +96,9 @@ docs/
 - The OLED driver (`oled.rs`) is a stub on non-Pi targets; `oled.show_qr()` is a no-op in terminal mode
 - Tor takes ~60 seconds to establish a hidden service on first boot — `TorManager::wait_for_onion` has a 120-second timeout
 - `cross` (not `cargo`) is required for Pi cross-compilation: `cargo install cross`
+- The `HEARTWOOD_DATA_DIR` env var controls where each instance reads/writes data. Falls back to `/var/lib/heartwood` when unset.
+- Systemd template units use `%i` for the instance name — `heartwood@personal.service` reads from `/var/lib/heartwood/personal/`
+- Identity tree names use `/` as a namespace separator: `persona/forgesworn`, `client/bray`, `agent/dispatch`
 
 ## Key Dependencies
 
