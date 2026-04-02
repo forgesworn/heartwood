@@ -82,6 +82,12 @@ if [ -n "$INSTANCE" ]; then
 Environment=HEARTWOOD_BIND=0.0.0.0:${PORT}
 EOF
         echo "  Port: $PORT"
+
+        # Open port in UFW if installed
+        if command -v ufw >/dev/null 2>&1; then
+            sudo ufw allow "${PORT}/tcp" comment "Heartwood web UI (${INSTANCE})" 2>/dev/null || true
+            echo "  UFW: opened port $PORT"
+        fi
     fi
 
     sudo systemctl daemon-reload
