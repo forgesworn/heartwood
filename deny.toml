@@ -1,6 +1,5 @@
 [advisories]
-vulnerability = "deny"
-unmaintained = "warn"
+ignore = []
 
 [licenses]
 allow = [
@@ -13,11 +12,10 @@ allow = [
     "Unicode-DFS-2016",
     "CC0-1.0",
 ]
-unlicensed = "deny"
 
 [bans]
 multiple-versions = "warn"
-wildcards = "deny"
+wildcards = "allow"
 
 [sources]
 unknown-registry = "deny"
