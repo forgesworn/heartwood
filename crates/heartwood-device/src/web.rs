@@ -381,6 +381,183 @@ async fn api_wordlist() -> impl IntoResponse {
 }
 
 #[derive(Deserialize)]
+struct DeriveClientKeyRequest {
+    /// Identity tree name, e.g. "client/bray", "client/bark"
+    name: String,
+}
+
+/// `POST /api/derive-client-key` — derive a child key from the nsec-tree root.
+///
+/// Requires the device to be unlocked and in tree-mnemonic or tree-nsec mode.
+/// Writes the derived secret to `<data_dir>/client-keys/<safe_name>.hex`.
+/// Returns only the pubkey — the secret never appears in any API response.
+async fn api_derive_client_key(
+    State(state): State<Arc<AppState>>,
+    axum::Json(req): axum::Json<DeriveClientKeyRequest>,
+) -> impl IntoResponse {
+    // Must be unlocked
+    let payload_guard = state.decrypted_payload.lock().await;
+    let payload = match payload_guard.as_deref() {
+        Some(p) => p.to_string(),
+        None => {
+            return (
+                StatusCode::LOCKED,
+                axum::Json(json!({"error": "device is locked"})),
+            )
+        }
+    };
+    drop(payload_guard);
+
+    // Reconstruct the tree root from the decrypted payload
+    let root = if let Some(rest) = payload.strip_prefix("tree-mnemonic:") {
+        let (pass, mnemonic) = rest.split_once(':').unwrap_or(("", rest));
+        let pass = if pass.is_empty() { None } else { Some(pass) };
+        match heartwood_core::from_mnemonic(mnemonic, pass) {
+            Ok(r) => r,
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    axum::Json(json!({"error": format!("failed to reconstruct root: {e}")})),
+                )
+            }
+        }
+    } else if let Some(nsec) = payload.strip_prefix("tree-nsec:") {
+        match heartwood_core::from_nsec(nsec) {
+            Ok(r) => r,
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    axum::Json(json!({"error": format!("failed to reconstruct root: {e}")})),
+                )
+            }
+        }
+    } else {
+        return (
+            StatusCode::BAD_REQUEST,
+            axum::Json(json!({"error": "client key derivation requires tree-mnemonic or tree-nsec mode"})),
+        );
+    };
+
+    // Derive the child identity
+    let mut identity = match heartwood_core::derive(&root, &req.name, 0) {
+        Ok(id) => id,
+        Err(e) => {
+            root.destroy();
+            return (
+                StatusCode::BAD_REQUEST,
+                axum::Json(json!({"error": format!("derivation failed: {e}")})),
+            );
+        }
+    };
+    root.destroy();
+
+    let pubkey_hex = heartwood_core::encoding::bytes_to_hex(&identity.public_key);
+    let secret_hex = heartwood_core::encoding::bytes_to_hex(identity.private_key.as_ref());
+    let npub = identity.npub.clone();
+
+    // Write secret to disk
+    let keys_dir = state.data_dir.join("client-keys");
+    if let Err(e) = std::fs::create_dir_all(&keys_dir) {
+        identity.zeroize();
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            axum::Json(json!({"error": format!("failed to create client-keys dir: {e}")})),
+        );
+    }
+
+    // Sanitise name for filename: replace / with -
+    let safe_name = req.name.replace('/', "-");
+    let key_path = keys_dir.join(format!("{safe_name}.hex"));
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        let result = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&key_path)
+            .and_then(|mut f| {
+                use std::io::Write;
+                f.write_all(secret_hex.as_bytes())
+            });
+        if let Err(e) = result {
+            identity.zeroize();
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(json!({"error": format!("failed to write client key: {e}")})),
+            );
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        if let Err(e) = std::fs::write(&key_path, &secret_hex) {
+            identity.zeroize();
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(json!({"error": format!("failed to write client key: {e}")})),
+            );
+        }
+    }
+
+    identity.zeroize();
+    info!("Derived client key '{}' → {npub}", req.name);
+
+    (
+        StatusCode::OK,
+        axum::Json(json!({
+            "name": req.name,
+            "npub": npub,
+            "pubkey": pubkey_hex,
+            "path": key_path.to_string_lossy(),
+        })),
+    )
+}
+
+/// `GET /api/client-keys` — list derived client keys (pubkeys only, no secrets).
+async fn api_list_client_keys(
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let keys_dir = state.data_dir.join("client-keys");
+    let mut keys = Vec::new();
+
+    if let Ok(entries) = std::fs::read_dir(&keys_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("hex") {
+                let safe_name = path.file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("")
+                    .to_string();
+                // Restore original name: client-bray → client/bray
+                let name = safe_name.replacen('-', "/", 1);
+
+                // Read the secret hex to derive pubkey (don't expose the secret)
+                if let Ok(hex_str) = std::fs::read_to_string(&path) {
+                    if let Ok(bytes) = heartwood_core::encoding::hex_to_bytes(hex_str.trim()) {
+                        if bytes.len() == 32 {
+                            let bytes_arr: [u8; 32] = bytes.try_into().unwrap();
+                            // Derive pubkey from secret using nsec encoding round-trip
+                            let nsec = heartwood_core::encode_nsec(&bytes_arr);
+                            if let Ok(npub) = heartwood_core::npub_from_nsec(&nsec) {
+                                let pubkey = heartwood_core::encoding::bytes_to_hex(
+                                    &heartwood_core::decode_npub(&npub).unwrap_or_default()
+                                );
+                                keys.push(json!({"name": name, "npub": npub, "pubkey": pubkey}));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    (StatusCode::OK, axum::Json(json!({"keys": keys})))
+}
+
+#[derive(Deserialize)]
 struct ResetRequest {
     password: Option<String>,
     /// Required as proof of ownership when no password is set.
@@ -1345,6 +1522,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/clients/clear", post(api_clear_clients))
         .route("/api/generate-mnemonic", get(api_generate_mnemonic))
         .route("/api/wordlist", get(api_wordlist))
+        .route("/api/client-keys", get(api_list_client_keys))
+        .route("/api/derive-client-key", post(api_derive_client_key))
         .layer(middleware::from_fn_with_state(state.clone(), lock_middleware))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
         .layer(DefaultBodyLimit::max(65536))
