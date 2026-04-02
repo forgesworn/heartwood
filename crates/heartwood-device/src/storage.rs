@@ -43,18 +43,16 @@ impl std::fmt::Display for EncryptionError {
 
 impl std::error::Error for EncryptionError {}
 
+/// Argon2id parameter sets used across encryption versions.
+const KDF_STRONG: (u32, u32, u32) = (65536, 3, 1); // m=64 MiB, t=3, p=1
+const KDF_LEGACY: (u32, u32, u32) = (19456, 2, 1); // m=19 MiB, t=2, p=1
+
 /// Derive a 256-bit key from a PIN/passphrase and salt using Argon2id.
-///
-/// V1: m=19456 KiB (19 MiB), t=2, p=1 — original library defaults.
-/// V2: m=65536 KiB (64 MiB), t=3, p=1 — stronger params for Pi Zero 2 W.
-fn derive_key(pin: &str, salt: &[u8], version: u8) -> Zeroizing<[u8; KEY_LEN]> {
+fn derive_key(pin: &str, salt: &[u8], params: (u32, u32, u32)) -> Zeroizing<[u8; KEY_LEN]> {
     let mut key = Zeroizing::new([0u8; KEY_LEN]);
-    let params = match version {
-        ENCRYPTION_V1 => argon2::Params::new(19456, 2, 1, Some(KEY_LEN)),
-        _ => argon2::Params::new(65536, 3, 1, Some(KEY_LEN)),
-    }
-    .expect("valid Argon2 params");
-    let argon2 = Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
+    let argon2_params =
+        argon2::Params::new(params.0, params.1, params.2, Some(KEY_LEN)).expect("valid Argon2 params");
+    let argon2 = Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, argon2_params);
     argon2
         .hash_password_into(pin.as_bytes(), salt, key.as_mut())
         .expect("Argon2id key derivation failed");
@@ -72,7 +70,7 @@ pub fn encrypt_with_pin(pin: &str, plaintext: &[u8]) -> Vec<u8> {
     let mut nonce_bytes = [0u8; NONCE_LEN];
     OsRng.fill_bytes(&mut nonce_bytes);
 
-    let key = derive_key(pin, &salt, ENCRYPTION_V2);
+    let key = derive_key(pin, &salt, KDF_STRONG);
     let cipher = Aes256Gcm::new_from_slice(key.as_ref()).expect("key length mismatch");
     let nonce = Nonce::from_slice(&nonce_bytes);
     let ciphertext = cipher.encrypt(nonce, plaintext).expect("AES-GCM encryption failed");
@@ -87,8 +85,13 @@ pub fn encrypt_with_pin(pin: &str, plaintext: &[u8]) -> Vec<u8> {
 
 /// Decrypt a blob produced by [`encrypt_with_pin`].
 ///
-/// Returns the plaintext and the version byte that was used. Callers can
-/// check `needs_migration(version)` to decide whether to re-encrypt.
+/// Returns the plaintext and the version byte. Callers can check
+/// `needs_migration(version)` to decide whether to re-encrypt.
+///
+/// V1 blobs are ambiguous: early releases used legacy KDF params, but a
+/// later release wrote V1 blobs with strong params (before versioning was
+/// added). We try strong params first, then fall back to legacy.
+/// V2 blobs always use strong params.
 #[allow(deprecated)] // Nonce::from_slice — aes-gcm 0.10 uses generic-array 0.x
 pub fn decrypt_with_pin(pin: &str, blob: &[u8]) -> Result<(Zeroizing<Vec<u8>>, u8), EncryptionError> {
     if blob.len() < MIN_ENCRYPTED_LEN {
@@ -103,13 +106,24 @@ pub fn decrypt_with_pin(pin: &str, blob: &[u8]) -> Result<(Zeroizing<Vec<u8>>, u
     let nonce_bytes = &blob[1 + SALT_LEN..1 + SALT_LEN + NONCE_LEN];
     let ciphertext = &blob[1 + SALT_LEN + NONCE_LEN..];
 
-    let key = derive_key(pin, salt, version);
-    let cipher = Aes256Gcm::new_from_slice(key.as_ref()).expect("key length mismatch");
-    let nonce = Nonce::from_slice(nonce_bytes);
-    cipher
-        .decrypt(nonce, ciphertext)
-        .map(|pt| (Zeroizing::new(pt), version))
-        .map_err(|_| EncryptionError::DecryptionFailed)
+    // Build the list of param sets to try.
+    // V2: strong only. V1: strong first (recent code wrote V1 with strong), then legacy.
+    let candidates: &[_] = if version == ENCRYPTION_V2 {
+        &[KDF_STRONG]
+    } else {
+        &[KDF_STRONG, KDF_LEGACY]
+    };
+
+    for &params in candidates {
+        let key = derive_key(pin, salt, params);
+        let cipher = Aes256Gcm::new_from_slice(key.as_ref()).expect("key length mismatch");
+        let nonce = Nonce::from_slice(nonce_bytes);
+        if let Ok(pt) = cipher.decrypt(nonce, ciphertext) {
+            return Ok((Zeroizing::new(pt), version));
+        }
+    }
+
+    Err(EncryptionError::DecryptionFailed)
 }
 
 /// Returns `true` if the blob was encrypted with an older KDF version.
@@ -252,8 +266,9 @@ mod tests {
     }
 
     #[test]
-    fn v1_blob_decrypts_and_flags_migration() {
-        // Simulate a V1 blob by encrypting with V1 params directly.
+    fn v1_blob_with_strong_params_decrypts() {
+        // V1 blob encrypted with strong params (the transitional state before
+        // version bytes were introduced). decrypt_with_pin tries strong first.
         let pin = "1234";
         let plaintext = b"bunker:nsec1abc123";
 
@@ -262,7 +277,7 @@ mod tests {
         let mut nonce_bytes = [0u8; NONCE_LEN];
         OsRng.fill_bytes(&mut nonce_bytes);
 
-        let key = derive_key(pin, &salt, ENCRYPTION_V1);
+        let key = derive_key(pin, &salt, KDF_STRONG);
         let cipher = Aes256Gcm::new_from_slice(key.as_ref()).unwrap();
         let nonce = Nonce::from_slice(&nonce_bytes);
         let ciphertext = cipher.encrypt(nonce, &plaintext[..]).unwrap();
@@ -273,7 +288,36 @@ mod tests {
         blob.extend_from_slice(&nonce_bytes);
         blob.extend_from_slice(&ciphertext);
 
-        let (decrypted, version) = decrypt_with_pin(pin, &blob).expect("V1 decryption failed");
+        let (decrypted, version) = decrypt_with_pin(pin, &blob).expect("V1+strong decryption failed");
+        assert_eq!(&*decrypted, plaintext);
+        assert_eq!(version, ENCRYPTION_V1);
+        assert!(needs_migration(version));
+    }
+
+    #[test]
+    fn v1_blob_with_legacy_params_decrypts() {
+        // V1 blob encrypted with original library defaults. decrypt_with_pin
+        // tries strong first (fails), then falls back to legacy (succeeds).
+        let pin = "1234";
+        let plaintext = b"bunker:nsec1abc123";
+
+        let mut salt = [0u8; SALT_LEN];
+        OsRng.fill_bytes(&mut salt);
+        let mut nonce_bytes = [0u8; NONCE_LEN];
+        OsRng.fill_bytes(&mut nonce_bytes);
+
+        let key = derive_key(pin, &salt, KDF_LEGACY);
+        let cipher = Aes256Gcm::new_from_slice(key.as_ref()).unwrap();
+        let nonce = Nonce::from_slice(&nonce_bytes);
+        let ciphertext = cipher.encrypt(nonce, &plaintext[..]).unwrap();
+
+        let mut blob = Vec::with_capacity(1 + SALT_LEN + NONCE_LEN + ciphertext.len());
+        blob.push(ENCRYPTION_V1);
+        blob.extend_from_slice(&salt);
+        blob.extend_from_slice(&nonce_bytes);
+        blob.extend_from_slice(&ciphertext);
+
+        let (decrypted, version) = decrypt_with_pin(pin, &blob).expect("V1+legacy decryption failed");
         assert_eq!(&*decrypted, plaintext);
         assert_eq!(version, ENCRYPTION_V1);
         assert!(needs_migration(version));
