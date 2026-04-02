@@ -587,6 +587,15 @@ impl HeartwoodServer {
     /// This is a test helper that bypasses the normal opt-in flow so
     /// tests can exercise extension methods without permission scaffolding.
     /// It should not be called in production code.
+    /// Restrict which event kinds a client may sign.
+    #[cfg(any(test, feature = "test-helpers"))]
+    pub fn restrict_signing_kinds(&mut self, client_pubkey: &str, kinds: std::collections::HashSet<u32>) {
+        let mut sessions = self.lock_sessions();
+        if let Some(session) = sessions.get_mut(client_pubkey) {
+            session.permissions.allowed_kinds = Some(kinds);
+        }
+    }
+
     #[cfg(any(test, feature = "test-helpers"))]
     pub fn grant_all_permissions(&mut self, client_pubkey: &str) {
         let privileged: std::collections::HashSet<String> = [

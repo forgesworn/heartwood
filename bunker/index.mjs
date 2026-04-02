@@ -533,6 +533,10 @@ async function handleRequest(event) {
 
     case 'heartwood_switch': {
       const targetPubkey = request.params[0]
+      if (typeof targetPubkey !== 'string' || targetPubkey.length === 0) {
+        error = 'heartwood_switch: target must be a non-empty string'
+        break
+      }
       if (targetPubkey === userPk) {
         // Switch back to master
         activePersonaPubkey = null
