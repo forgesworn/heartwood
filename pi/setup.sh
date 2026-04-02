@@ -11,6 +11,7 @@ sudo usermod -aG debian-tor heartwood 2>/dev/null || true
 sudo mkdir -p /var/lib/heartwood /run/heartwood
 sudo chown heartwood:heartwood /var/lib/heartwood /run/heartwood
 sudo chmod 700 /var/lib/heartwood
+sudo chmod 700 /run/heartwood
 # Install a systemd drop-in so Tor copies the .onion hostname to a path
 # the heartwood user can read. Never loosen permissions on /var/lib/tor/ —
 # Tor requires 0700 on hidden service directories and refuses to start otherwise.

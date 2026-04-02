@@ -152,7 +152,8 @@ jobs:
 
           # Configure Tor hidden service
           sudo mkdir -p /etc/tor/torrc.d
-          echo "HiddenServiceDir /var/lib/tor/heartwood/" | sudo tee /etc/tor/torrc.d/heartwood.conf > /dev/null
+          echo "SocksPort 0" | sudo tee /etc/tor/torrc.d/heartwood.conf > /dev/null
+          echo "HiddenServiceDir /var/lib/tor/heartwood/" | sudo tee -a /etc/tor/torrc.d/heartwood.conf > /dev/null
           echo "HiddenServicePort 80 127.0.0.1:3000" | sudo tee -a /etc/tor/torrc.d/heartwood.conf > /dev/null
           sudo systemctl restart tor
 
@@ -203,8 +204,7 @@ jobs:
           # Install Node.js for the bunker sidecar
           if ! command -v node &> /dev/null; then
             echo "Installing Node.js..."
-            curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-            sudo apt-get install -y -qq nodejs
+            sudo apt-get install -y -qq nodejs npm
           fi
 
           # Install bunker sidecar

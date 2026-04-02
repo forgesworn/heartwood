@@ -18,7 +18,9 @@ Environment=NODE_ENV=production
 
 # Security hardening
 ProtectSystem=strict
-ProtectHome=read-only
+ProtectHome=true
+# Note: MemoryDenyWriteExecute is intentionally omitted — Node.js (V8 JIT)
+# requires write-execute memory pages. The Rust binary unit includes it.
 ReadWritePaths=/var/lib/heartwood
 ReadOnlyPaths=/opt/heartwood
 NoNewPrivileges=true
