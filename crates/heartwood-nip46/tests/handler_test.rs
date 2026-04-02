@@ -1,6 +1,8 @@
 // crates/heartwood-nip46/tests/handler_test.rs
 //! Comprehensive handler tests covering all NIP-46 methods and Heartwood extensions.
 
+use std::collections::HashSet;
+
 use heartwood_core::root::from_nsec_bytes;
 use heartwood_nip46::methods::Nip46Request;
 use heartwood_nip46::server::HeartwoodServer;
@@ -525,4 +527,64 @@ fn recover_populates_cache() {
     );
     let list = list_resp.result().unwrap().as_array().unwrap();
     assert_eq!(list.len(), 8);
+}
+
+// ---------------------------------------------------------------------------
+// Kind restriction enforcement in sign_event
+// ---------------------------------------------------------------------------
+
+#[test]
+fn sign_event_blocked_for_restricted_kind() {
+    let mut server = test_server_with_perms();
+
+    // Derive and switch to an identity so sign_event has an active key.
+    server.handle_request(
+        "derive",
+        CLIENT,
+        req(r#"{"method":"heartwood_derive","params":["social", 0]}"#),
+    );
+    let switch = server.handle_request(
+        "switch",
+        CLIENT,
+        req(r#"{"method":"heartwood_switch","params":["social"]}"#),
+    );
+    assert!(switch.error().is_none());
+
+    // Restrict this client to kind 1 only.
+    let mut allowed = HashSet::new();
+    allowed.insert(1u32);
+    server.restrict_signing_kinds(CLIENT, allowed);
+
+    // Kind 1 should succeed.
+    let template_k1 = serde_json::json!({
+        "kind": 1,
+        "created_at": 1700000000u64,
+        "tags": [],
+        "content": "hello"
+    });
+    let sign_k1 = server.handle_request(
+        "sign-k1",
+        CLIENT,
+        Nip46Request::SignEvent(vec![serde_json::Value::String(template_k1.to_string())]),
+    );
+    assert!(sign_k1.error().is_none(), "kind 1 should be allowed: {:?}", sign_k1.error());
+
+    // Kind 3 should be blocked.
+    let template_k3 = serde_json::json!({
+        "kind": 3,
+        "created_at": 1700000000u64,
+        "tags": [],
+        "content": ""
+    });
+    let sign_k3 = server.handle_request(
+        "sign-k3",
+        CLIENT,
+        Nip46Request::SignEvent(vec![serde_json::Value::String(template_k3.to_string())]),
+    );
+    assert!(sign_k3.error().is_some(), "kind 3 should be blocked");
+    assert!(
+        sign_k3.error().unwrap().contains("not permitted"),
+        "error should mention permission: {:?}",
+        sign_k3.error()
+    );
 }

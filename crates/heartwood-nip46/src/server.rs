@@ -150,6 +150,18 @@ impl HeartwoodServer {
                     format!("method '{method}' not permitted for this client"),
                 );
             }
+
+            // Kind restriction check for sign_event.
+            if let Nip46Request::SignEvent(ref params) = request {
+                if let Some(kind) = extract_event_kind(params) {
+                    if !session.permissions.can_sign_kind(kind) {
+                        return Nip46Response::err(
+                            request_id,
+                            format!("signing kind {kind} not permitted for this client"),
+                        );
+                    }
+                }
+            }
         }
 
         // 5. Dispatch. Root is guaranteed Some at this point.
@@ -575,7 +587,16 @@ impl HeartwoodServer {
     /// This is a test helper that bypasses the normal opt-in flow so
     /// tests can exercise extension methods without permission scaffolding.
     /// It should not be called in production code.
-    #[doc(hidden)]
+    /// Restrict which event kinds a client may sign.
+    #[cfg(any(test, feature = "test-helpers"))]
+    pub fn restrict_signing_kinds(&mut self, client_pubkey: &str, kinds: std::collections::HashSet<u32>) {
+        let mut sessions = self.lock_sessions();
+        if let Some(session) = sessions.get_mut(client_pubkey) {
+            session.permissions.allowed_kinds = Some(kinds);
+        }
+    }
+
+    #[cfg(any(test, feature = "test-helpers"))]
     pub fn grant_all_permissions(&mut self, client_pubkey: &str) {
         let privileged: std::collections::HashSet<String> = [
             "heartwood_derive",
@@ -599,6 +620,21 @@ impl HeartwoodServer {
             sessions.add(session);
         }
     }
+}
+
+/// Extract the event `kind` from sign_event params, if present.
+///
+/// Handles both JSON string and inline object formats.
+fn extract_event_kind(params: &[serde_json::Value]) -> Option<u32> {
+    let raw = params.first()?;
+    let template = if raw.is_string() {
+        serde_json::from_str(raw.as_str()?).ok()?
+    } else if raw.is_object() {
+        raw.clone()
+    } else {
+        return None;
+    };
+    template["kind"].as_u64().map(|k| k as u32)
 }
 
 impl Default for HeartwoodServer {

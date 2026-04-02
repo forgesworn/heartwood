@@ -37,8 +37,8 @@ sudo cp heartwood.service /etc/systemd/system/
 # Install bunker sidecar
 if [ -d "../bunker" ]; then
     sudo mkdir -p /opt/heartwood/bunker
-    sudo cp ../bunker/index.mjs ../bunker/package.json /opt/heartwood/bunker/
-    cd /opt/heartwood/bunker && sudo npm install --omit=dev 2>/dev/null && cd -
+    sudo cp ../bunker/index.mjs ../bunker/lib.mjs ../bunker/package.json ../bunker/package-lock.json /opt/heartwood/bunker/
+    cd /opt/heartwood/bunker && sudo npm ci --omit=dev && cd -
     sudo chown -R heartwood:heartwood /opt/heartwood
 fi
 if [ -f "heartwood-bunker.service" ]; then

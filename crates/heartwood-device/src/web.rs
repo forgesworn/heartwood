@@ -351,6 +351,19 @@ async fn api_reset(
     State(state): State<Arc<AppState>>,
     axum::Json(req): axum::Json<ResetRequest>,
 ) -> impl IntoResponse {
+    // Check brute-force throttle (shared with unlock)
+    {
+        let throttle = state.unlock_throttle.lock().await;
+        if let Err(secs) = throttle.check() {
+            return (
+                StatusCode::TOO_MANY_REQUESTS,
+                axum::Json(json!({
+                    "error": format!("too many failed attempts — try again in {secs}s")
+                })),
+            );
+        }
+    }
+
     let storage = state.storage.lock().await;
 
     if !storage.has_master_secret() {
@@ -376,6 +389,7 @@ async fn api_reset(
                 password == stored
             };
             if !valid {
+                state.unlock_throttle.lock().await.record_failure();
                 return (StatusCode::FORBIDDEN, axum::Json(json!({"error": "incorrect password"})));
             }
         }
@@ -401,6 +415,7 @@ async fn api_reset(
                 }
             };
             if storage::is_encrypted(&bytes) && storage::decrypt_with_pin(pin, &bytes).is_err() {
+                state.unlock_throttle.lock().await.record_failure();
                 return (StatusCode::FORBIDDEN, axum::Json(json!({"error": "incorrect PIN"})));
             }
         }
@@ -519,7 +534,16 @@ async fn api_unlock(
 
     match storage::decrypt_with_pin(&req.pin, &bytes) {
         Ok(mut plaintext) => {
-            let payload = String::from_utf8_lossy(&plaintext).to_string();
+            let payload = match String::from_utf8(plaintext.clone()) {
+                Ok(s) => s,
+                Err(_) => {
+                    plaintext.zeroize();
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        axum::Json(json!({"error": "decrypted payload is not valid UTF-8"})),
+                    );
+                }
+            };
             plaintext.zeroize();
             write_runtime_payload(&payload);
             *state.decrypted_payload.lock().await = Some(payload);
@@ -942,6 +966,19 @@ async fn api_set_password(
     State(state): State<Arc<AppState>>,
     axum::Json(req): axum::Json<PasswordRequest>,
 ) -> impl IntoResponse {
+    // Check brute-force throttle (shared with unlock/reset)
+    {
+        let throttle = state.unlock_throttle.lock().await;
+        if let Err(secs) = throttle.check() {
+            return (
+                StatusCode::TOO_MANY_REQUESTS,
+                axum::Json(json!({
+                    "error": format!("too many failed attempts — try again in {secs}s")
+                })),
+            );
+        }
+    }
+
     if req.password.is_empty() {
         return (StatusCode::BAD_REQUEST, axum::Json(json!({"error": "password cannot be empty"})));
     }
@@ -973,6 +1010,7 @@ async fn api_set_password(
             current == stored
         };
         if !valid {
+            state.unlock_throttle.lock().await.record_failure();
             return (
                 StatusCode::FORBIDDEN,
                 axum::Json(json!({"error": "incorrect current password"})),

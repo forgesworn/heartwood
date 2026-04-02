@@ -212,11 +212,11 @@ jobs:
           # Install bunker sidecar
           echo "Installing bunker sidecar..."
           sudo mkdir -p /opt/heartwood/bunker
-          curl -sL "https://raw.githubusercontent.com/$REPO/$TAG/bunker/index.mjs" \
-            -o /opt/heartwood/bunker/index.mjs
-          curl -sL "https://raw.githubusercontent.com/$REPO/$TAG/bunker/package.json" \
-            -o /opt/heartwood/bunker/package.json
-          cd /opt/heartwood/bunker && sudo npm install --omit=dev 2>/dev/null && cd /
+          for f in index.mjs lib.mjs package.json package-lock.json; do
+            curl -sL "https://raw.githubusercontent.com/$REPO/$TAG/bunker/$f" \
+              -o "/opt/heartwood/bunker/$f"
+          done
+          cd /opt/heartwood/bunker && sudo npm ci --omit=dev && cd /
           sudo chown -R heartwood:heartwood /opt/heartwood
 
           cat << 'BUNKER_SERVICE' | sudo tee /etc/systemd/system/heartwood-bunker.service > /dev/null
@@ -254,6 +254,9 @@ jobs:
           ProtectKernelModules=true
           ProtectControlGroups=true
           RestrictNamespaces=true
+          DevicePolicy=closed
+          MemoryMax=256M
+          TasksMax=32
 
           [Install]
           WantedBy=multi-user.target
