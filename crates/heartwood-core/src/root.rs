@@ -57,6 +57,23 @@ pub fn from_nsec(nsec: &str) -> Result<TreeRoot, HeartwoodError> {
     from_nsec_bytes(&nsec_bytes)
 }
 
+/// Generate a new 24-word BIP-39 mnemonic using OS entropy.
+///
+/// Returns the words as a `Vec<String>`. The caller is responsible for
+/// displaying them to the user and not logging or persisting them.
+pub fn generate_mnemonic() -> Result<Vec<String>, HeartwoodError> {
+    use bip39::Mnemonic;
+    use rand_core::OsRng;
+
+    let mut entropy = zeroize::Zeroizing::new([0u8; 32]);
+    rand_core::RngCore::fill_bytes(&mut OsRng, entropy.as_mut());
+
+    let mnemonic = Mnemonic::from_entropy(&*entropy)
+        .map_err(|e| HeartwoodError::Derivation(format!("mnemonic generation failed: {e}")))?;
+
+    Ok(mnemonic.words().map(|w| w.to_string()).collect())
+}
+
 /// Create a TreeRoot from a BIP-39 mnemonic phrase.
 ///
 /// 1. Validate the mnemonic
