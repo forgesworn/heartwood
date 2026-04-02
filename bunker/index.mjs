@@ -416,7 +416,13 @@ async function handleRequest(event) {
         error = 'sign_event: missing event template'
         break
       }
-      const template = JSON.parse(request.params[0])
+      let template
+      try {
+        template = JSON.parse(request.params[0])
+      } catch {
+        error = 'sign_event: invalid event JSON'
+        break
+      }
       // Kind restriction check
       if (template.kind !== undefined && !isKindAllowed(clientPk, template.kind)) {
         error = `signing kind ${template.kind} not permitted for this client`

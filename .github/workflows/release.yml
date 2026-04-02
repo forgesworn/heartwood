@@ -177,7 +177,9 @@ jobs:
           Environment=HEARTWOOD_BIND=0.0.0.0:3000
           ProtectSystem=strict
           ProtectHome=true
-          ReadWritePaths=/var/lib/heartwood /run/heartwood
+          ReadWritePaths=/var/lib/heartwood
+          RuntimeDirectory=heartwood
+          RuntimeDirectoryMode=0700
           NoNewPrivileges=true
           PrivateTmp=true
           CapabilityBoundingSet=
@@ -236,9 +238,10 @@ jobs:
           RestartSec=15
           Environment=NODE_ENV=production
           ProtectSystem=strict
-          ProtectHome=read-only
+          ProtectHome=true
           ReadWritePaths=/var/lib/heartwood
           ReadOnlyPaths=/opt/heartwood
+          # MemoryDenyWriteExecute intentionally omitted — Node.js V8 JIT needs W+X pages
           NoNewPrivileges=true
           PrivateTmp=true
           CapabilityBoundingSet=
