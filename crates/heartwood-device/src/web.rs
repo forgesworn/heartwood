@@ -431,10 +431,20 @@ async fn api_derive_client_key(
                 )
             }
         }
+    } else if let Some(nsec) = payload.strip_prefix("bunker:") {
+        match heartwood_core::from_nsec(nsec) {
+            Ok(r) => r,
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    axum::Json(json!({"error": format!("failed to reconstruct root: {e}")})),
+                )
+            }
+        }
     } else {
         return (
             StatusCode::BAD_REQUEST,
-            axum::Json(json!({"error": "client key derivation requires tree-mnemonic or tree-nsec mode"})),
+            axum::Json(json!({"error": "client key derivation requires tree-mnemonic, tree-nsec, or bunker mode"})),
         );
     };
 
@@ -1502,6 +1512,104 @@ fn chrono_now_iso() -> String {
     format!("{secs}")
 }
 
+#[derive(Deserialize)]
+struct PairRequest {
+    name: String,
+    pubkey: String,
+}
+
+/// Validate a pairing client name: 1–64 chars, alphanumeric + hyphens.
+fn is_valid_pair_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
+/// `POST /api/pair` — register a client pubkey and return the bunker URI.
+///
+/// Used by Bark to pair over HTTP. Requires the device to be unlocked.
+/// Writes the pubkey to clients.json so the bunker auto-approves it.
+async fn api_pair(
+    State(state): State<Arc<AppState>>,
+    axum::Json(req): axum::Json<PairRequest>,
+) -> impl IntoResponse {
+    // Validate name
+    if !is_valid_pair_name(&req.name) {
+        return (
+            StatusCode::BAD_REQUEST,
+            axum::Json(json!({"error": "invalid name — 1-64 chars, alphanumeric and hyphens only"})),
+        );
+    }
+
+    // Validate pubkey format
+    if req.pubkey.len() != 64 || !req.pubkey.chars().all(|c| c.is_ascii_hexdigit()) {
+        return (
+            StatusCode::BAD_REQUEST,
+            axum::Json(json!({"error": "invalid pubkey — expected 64 hex characters"})),
+        );
+    }
+
+    // Read bunker URI (written by the bunker sidecar)
+    let bunker_uri = match std::fs::read_to_string(state.data_file("bunker-uri.txt")) {
+        Ok(uri) => uri.trim().to_string(),
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(json!({"error": "bunker not running — no bunker-uri.txt found"})),
+            );
+        }
+    };
+
+    // Read signing identity from cached payload
+    let payload_guard = state.decrypted_payload.lock().await;
+    let (mode, npub) = parse_payload(payload_guard.as_ref().map(|z| z.as_str()).unwrap_or(""));
+    drop(payload_guard);
+
+    // Instance name from data directory
+    let instance = state
+        .data_dir
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    // Approve the client in clients.json
+    let mut approved = load_clients_file(&state.data_file("clients.json"));
+    if !approved.is_object() {
+        approved = json!({});
+    }
+    let approved_obj = approved.as_object_mut().expect("just verified is_object");
+    approved_obj.insert(req.pubkey.clone(), json!({
+        "approvedAt": chrono_now_iso(),
+        "label": req.name,
+    }));
+
+    if let Err(e) = write_clients_file(&state.data_file("clients.json"), &approved) {
+        tracing::error!("Failed to save clients.json: {e}");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            axum::Json(json!({"error": "failed to save client approval"})),
+        );
+    }
+
+    // Remove from pending if present
+    let mut pending = load_clients_file(&state.data_file("pending-clients.json"));
+    if let Some(obj) = pending.as_object_mut() {
+        if obj.remove(&req.pubkey).is_some() {
+            let _ = write_clients_file(&state.data_file("pending-clients.json"), &pending);
+        }
+    }
+
+    info!("Paired client '{}': {}...", req.name, &req.pubkey[..12]);
+
+    (StatusCode::OK, axum::Json(json!({
+        "name": req.name,
+        "instance": instance,
+        "bunkerUri": bunker_uri,
+        "npub": npub,
+        "mode": mode,
+    })))
+}
+
 /// Build and return the application router.
 ///
 /// No CORS layer is applied — the web UI uses same-origin requests.
@@ -1526,6 +1634,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/clients/approve", post(api_approve_client))
         .route("/api/clients/revoke", post(api_revoke_client))
         .route("/api/clients/clear", post(api_clear_clients))
+        .route("/api/pair", post(api_pair))
         .route("/api/generate-mnemonic", get(api_generate_mnemonic))
         .route("/api/wordlist", get(api_wordlist))
         .route("/api/client-keys", get(api_list_client_keys))
@@ -1746,5 +1855,24 @@ mod tests {
         .unwrap();
         let words = body["words"].as_array().expect("words should be an array");
         assert_eq!(words.len(), 2048);
+    }
+
+    #[test]
+    fn validate_pair_request_accepts_valid() {
+        let valid = serde_json::json!({"name": "bark", "pubkey": FAKE_PK});
+        let req: PairRequest = serde_json::from_value(valid).unwrap();
+        assert_eq!(req.name, "bark");
+        assert_eq!(req.pubkey, FAKE_PK);
+    }
+
+    #[test]
+    fn validate_pair_name_format() {
+        // Alphanumeric + hyphens only
+        assert!(is_valid_pair_name("bark"));
+        assert!(is_valid_pair_name("my-client-1"));
+        assert!(!is_valid_pair_name(""));
+        assert!(!is_valid_pair_name("has spaces"));
+        assert!(!is_valid_pair_name("has/slash"));
+        assert!(!is_valid_pair_name(&"a".repeat(65)));
     }
 }
