@@ -13,8 +13,8 @@ async fn main() {
     tracing_subscriber::fmt::init();
     info!("Heartwood starting...");
 
-    let data_dir = std::env::var("HEARTWOOD_DATA_DIR")
-        .unwrap_or_else(|_| "/var/lib/heartwood".to_string());
+    let data_dir =
+        std::env::var("HEARTWOOD_DATA_DIR").unwrap_or_else(|_| "/var/lib/heartwood".to_string());
     let data_path = std::path::PathBuf::from(&data_dir);
     info!("Data directory: {}", data_dir);
 

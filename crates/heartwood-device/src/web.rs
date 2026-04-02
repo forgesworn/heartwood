@@ -4,6 +4,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
+use argon2::Argon2;
 use axum::{
     extract::{DefaultBodyLimit, Request, State},
     http::{header, StatusCode},
@@ -12,13 +13,12 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
+use rand_core::OsRng;
 use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::Mutex;
 use tracing::info;
-use argon2::Argon2;
-use password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
-use rand_core::OsRng;
 
 use crate::audit::AuditLog;
 use crate::storage;
@@ -63,8 +63,7 @@ impl UnlockThrottle {
             _ => 300,
         };
         if delay_secs > 0 {
-            self.lockout_until =
-                Some(Instant::now() + std::time::Duration::from_secs(delay_secs));
+            self.lockout_until = Some(Instant::now() + std::time::Duration::from_secs(delay_secs));
         }
     }
 
@@ -350,24 +349,16 @@ async fn api_setup(
 ///
 /// Only available in setup mode (no master secret stored).
 /// The mnemonic is returned once and not stored or logged server-side.
-async fn api_generate_mnemonic(
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+async fn api_generate_mnemonic(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let storage = state.storage.lock().await;
     if storage.has_master_secret() {
-        return (
-            StatusCode::CONFLICT,
-            axum::Json(json!({"error": "device already configured"})),
-        );
+        return (StatusCode::CONFLICT, axum::Json(json!({"error": "device already configured"})));
     }
     drop(storage);
 
     match heartwood_core::generate_mnemonic() {
         Ok(words) => (StatusCode::OK, axum::Json(json!({"words": words}))),
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            axum::Json(json!({"error": format!("{e}")})),
-        ),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, axum::Json(json!({"error": format!("{e}")}))),
     }
 }
 
@@ -399,12 +390,7 @@ async fn api_derive_client_key(
     let payload_guard = state.decrypted_payload.lock().await;
     let payload = match payload_guard.as_deref() {
         Some(p) => p.to_string(),
-        None => {
-            return (
-                StatusCode::LOCKED,
-                axum::Json(json!({"error": "device is locked"})),
-            )
-        }
+        None => return (StatusCode::LOCKED, axum::Json(json!({"error": "device is locked"}))),
     };
     drop(payload_guard);
 
@@ -444,7 +430,9 @@ async fn api_derive_client_key(
     } else {
         return (
             StatusCode::BAD_REQUEST,
-            axum::Json(json!({"error": "client key derivation requires tree-mnemonic, tree-nsec, or bunker mode"})),
+            axum::Json(
+                json!({"error": "client key derivation requires tree-mnemonic, tree-nsec, or bunker mode"}),
+            ),
         );
     };
 
@@ -527,9 +515,7 @@ async fn api_derive_client_key(
 }
 
 /// `GET /api/client-keys` — list derived client keys (pubkeys only, no secrets).
-async fn api_list_client_keys(
-    State(state): State<Arc<AppState>>,
-) -> impl IntoResponse {
+async fn api_list_client_keys(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let keys_dir = state.data_dir.join("client-keys");
     let mut keys = Vec::new();
 
@@ -537,10 +523,7 @@ async fn api_list_client_keys(
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().and_then(|e| e.to_str()) == Some("hex") {
-                let safe_name = path.file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("")
-                    .to_string();
+                let safe_name = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
                 // Restore original name: client-bray → client/bray
                 let name = safe_name.replacen('-', "/", 1);
 
@@ -553,7 +536,7 @@ async fn api_list_client_keys(
                             let nsec = heartwood_core::encode_nsec(&bytes_arr);
                             if let Ok(npub) = heartwood_core::npub_from_nsec(&nsec) {
                                 let pubkey = heartwood_core::encoding::bytes_to_hex(
-                                    &heartwood_core::decode_npub(&npub).unwrap_or_default()
+                                    &heartwood_core::decode_npub(&npub).unwrap_or_default(),
                                 );
                                 keys.push(json!({"name": name, "npub": npub, "pubkey": pubkey}));
                             }
@@ -886,7 +869,15 @@ async fn lock_middleware(
     let path = req.uri().path().to_string();
 
     // These endpoints work regardless of lock state
-    let unlocked_paths = ["/", "/api/status", "/api/unlock", "/api/set-pin", "/api/setup", "/api/generate-mnemonic", "/api/wordlist"];
+    let unlocked_paths = [
+        "/",
+        "/api/status",
+        "/api/unlock",
+        "/api/set-pin",
+        "/api/setup",
+        "/api/generate-mnemonic",
+        "/api/wordlist",
+    ];
     if unlocked_paths.contains(&path.as_str()) {
         return next.run(req).await;
     }
@@ -1239,15 +1230,14 @@ async fn api_set_password(
             None => {
                 return (
                     StatusCode::BAD_REQUEST,
-                    axum::Json(json!({"error": "current_password required when changing password"})),
+                    axum::Json(
+                        json!({"error": "current_password required when changing password"}),
+                    ),
                 );
             }
         };
-        let valid = if is_hashed(&stored) {
-            verify_password(current, &stored)
-        } else {
-            current == stored
-        };
+        let valid =
+            if is_hashed(&stored) { verify_password(current, &stored) } else { current == stored };
         if !valid {
             state.unlock_throttle.lock().await.record_failure();
             return (
@@ -1537,7 +1527,9 @@ async fn api_pair(
     if !is_valid_pair_name(&req.name) {
         return (
             StatusCode::BAD_REQUEST,
-            axum::Json(json!({"error": "invalid name — 1-64 chars, alphanumeric and hyphens only"})),
+            axum::Json(
+                json!({"error": "invalid name — 1-64 chars, alphanumeric and hyphens only"}),
+            ),
         );
     }
 
@@ -1578,10 +1570,13 @@ async fn api_pair(
         approved = json!({});
     }
     let approved_obj = approved.as_object_mut().expect("just verified is_object");
-    approved_obj.insert(req.pubkey.clone(), json!({
-        "approvedAt": chrono_now_iso(),
-        "label": req.name,
-    }));
+    approved_obj.insert(
+        req.pubkey.clone(),
+        json!({
+            "approvedAt": chrono_now_iso(),
+            "label": req.name,
+        }),
+    );
 
     if let Err(e) = write_clients_file(&state.data_file("clients.json"), &approved) {
         tracing::error!("Failed to save clients.json: {e}");
@@ -1601,13 +1596,16 @@ async fn api_pair(
 
     info!("Paired client '{}': {}...", req.name, &req.pubkey[..12]);
 
-    (StatusCode::OK, axum::Json(json!({
-        "name": req.name,
-        "instance": instance,
-        "bunkerUri": bunker_uri,
-        "npub": npub,
-        "mode": mode,
-    })))
+    (
+        StatusCode::OK,
+        axum::Json(json!({
+            "name": req.name,
+            "instance": instance,
+            "bunkerUri": bunker_uri,
+            "npub": npub,
+            "mode": mode,
+        })),
+    )
 }
 
 /// Build and return the application router.
@@ -1738,18 +1736,18 @@ mod tests {
 
     #[test]
     fn validate_pin_accepts_valid() {
-        assert!(validate_pin("1234"));           // 4-digit PIN
-        assert!(validate_pin("12345678"));       // 8-digit PIN
-        assert!(validate_pin("myPassphrase1"));  // alphanumeric
+        assert!(validate_pin("1234")); // 4-digit PIN
+        assert!(validate_pin("12345678")); // 8-digit PIN
+        assert!(validate_pin("myPassphrase1")); // alphanumeric
         assert!(validate_pin("correct horse battery staple")); // passphrase with spaces
         assert!(validate_pin("P@ss!w0rd#2024")); // symbols
     }
 
     #[test]
     fn validate_pin_rejects_invalid() {
-        assert!(!validate_pin("123"));        // too short
-        assert!(!validate_pin(""));           // empty
-        assert!(!validate_pin("   "));        // whitespace only
+        assert!(!validate_pin("123")); // too short
+        assert!(!validate_pin("")); // empty
+        assert!(!validate_pin("   ")); // whitespace only
         assert!(!validate_pin(&"a".repeat(65))); // too long
     }
 
@@ -1769,8 +1767,7 @@ mod tests {
         use std::sync::atomic::{AtomicU64, Ordering};
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-        let tmp = std::env::temp_dir()
-            .join(format!("heartwood-test-{}-{}", std::process::id(), n));
+        let tmp = std::env::temp_dir().join(format!("heartwood-test-{}-{}", std::process::id(), n));
         let _ = std::fs::create_dir_all(&tmp);
         Arc::new(AppState {
             audit_log: Mutex::new(AuditLog::new()),
@@ -1840,10 +1837,7 @@ mod tests {
 
         let response = app
             .oneshot(
-                axum::http::Request::builder()
-                    .uri("/api/wordlist")
-                    .body(Body::empty())
-                    .unwrap(),
+                axum::http::Request::builder().uri("/api/wordlist").body(Body::empty()).unwrap(),
             )
             .await
             .unwrap();

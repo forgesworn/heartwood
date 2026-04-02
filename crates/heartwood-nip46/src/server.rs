@@ -589,7 +589,11 @@ impl HeartwoodServer {
     /// It should not be called in production code.
     /// Restrict which event kinds a client may sign.
     #[cfg(any(test, feature = "test-helpers"))]
-    pub fn restrict_signing_kinds(&mut self, client_pubkey: &str, kinds: std::collections::HashSet<u32>) {
+    pub fn restrict_signing_kinds(
+        &mut self,
+        client_pubkey: &str,
+        kinds: std::collections::HashSet<u32>,
+    ) {
         let mut sessions = self.lock_sessions();
         if let Some(session) = sessions.get_mut(client_pubkey) {
             session.permissions.allowed_kinds = Some(kinds);
