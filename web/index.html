@@ -99,6 +99,32 @@
         .client-meta { font-size: 0.72rem; opacity: 0.4; margin-top: 0.15rem; }
         .client-actions { display: flex; gap: 0.4rem; align-items: center; margin-top: 0.4rem; }
         .client-actions input { flex: 1; padding: 0.3rem 0.5rem; background: #111; border: 1px solid #333; border-radius: 4px; color: #e0e0e0; font-size: 0.8rem; }
+
+        /* Mnemonic wizard */
+        .mnemonic-wizard { text-align: center; }
+        .mnemonic-wizard .progress { height: 3px; background: #222; border-radius: 2px; margin-bottom: 1.5rem; overflow: hidden; }
+        .mnemonic-wizard .progress-fill { height: 100%; background: #1a6b35; transition: width 0.3s; }
+        .mnemonic-wizard .word-num { font-size: 0.82rem; opacity: 0.5; margin-bottom: 0.5rem; }
+        .mnemonic-wizard .word-display { font-size: 2rem; font-family: monospace; font-weight: bold; padding: 2rem 0; min-height: 6rem; display: flex; align-items: center; justify-content: center; }
+        .mnemonic-wizard .instruction { font-size: 0.85rem; opacity: 0.5; margin-bottom: 1.5rem; }
+        .mnemonic-wizard .nav-row { display: flex; gap: 0.75rem; justify-content: center; }
+        .mnemonic-wizard .nav-row .btn { max-width: 10rem; }
+
+        /* Type-ahead */
+        .typeahead-wrap { position: relative; max-width: 20rem; margin: 0 auto 1.5rem; }
+        .typeahead-wrap input { width: 100%; padding: 0.75rem; background: #111; border: 1px solid #333; border-radius: 6px; color: #e0e0e0; font-family: monospace; font-size: 1.3rem; text-align: center; }
+        .typeahead-wrap input:focus { outline: none; border-color: #1a6b35; }
+        .typeahead-wrap input.error { border-color: #8b2020; animation: flash-red 0.3s; }
+        @keyframes flash-red { 0%,100% { background: #111; } 50% { background: #2a0f0f; } }
+        .typeahead-suggestions { position: absolute; top: 100%; left: 0; right: 0; background: #1a1a1a; border: 1px solid #333; border-top: none; border-radius: 0 0 6px 6px; z-index: 10; display: none; }
+        .typeahead-suggestions.visible { display: block; }
+        .typeahead-suggestions .suggestion { padding: 0.75rem; cursor: pointer; font-family: monospace; font-size: 1.1rem; min-height: 44px; display: flex; align-items: center; }
+        .typeahead-suggestions .suggestion:hover, .typeahead-suggestions .suggestion.active { background: #0d1a12; color: #1a6b35; }
+
+        /* Mode toggle (generate/recover) */
+        .mode-toggle { display: flex; gap: 0; margin-bottom: 1.5rem; border-radius: 6px; overflow: hidden; border: 1px solid #333; }
+        .mode-toggle button { flex: 1; padding: 0.6rem; background: #111; color: #888; border: none; cursor: pointer; font-size: 0.85rem; transition: all 0.15s; }
+        .mode-toggle button.active { background: #1a6b35; color: #fff; }
     </style>
 </head>
 <body>
@@ -158,13 +184,60 @@
 
             <!-- Tree-mnemonic fields -->
             <div id="fields-tree-mnemonic" class="fields hidden">
-                <div class="field">
-                    <label>BIP-39 mnemonic (12 or 24 words)</label>
-                    <textarea id="tree-mnemonic" placeholder="abandon ability able about ..." autocomplete="off" spellcheck="false"></textarea>
+                <!-- Toggle: generate or recover -->
+                <div class="mode-toggle">
+                    <button class="active" onclick="setMnemonicMode('generate')">Generate new</button>
+                    <button onclick="setMnemonicMode('recover')">Recover existing</button>
                 </div>
-                <div class="field">
-                    <label>Passphrase (optional)</label>
-                    <input type="password" id="tree-passphrase" placeholder="Leave blank if none" autocomplete="off">
+
+                <!-- Generate: word display phase -->
+                <div id="mnem-generate" class="mnemonic-wizard hidden">
+                    <div class="progress"><div class="progress-fill" id="gen-progress"></div></div>
+                    <div class="word-num" id="gen-word-num">Word 1 of 24</div>
+                    <div class="word-display" id="gen-word-display"></div>
+                    <p class="instruction">Write this word down. Do not store it digitally.</p>
+                    <div class="nav-row">
+                        <button class="btn btn-primary" id="gen-prev" onclick="genPrev()" disabled>Previous</button>
+                        <button class="btn btn-primary" id="gen-next" onclick="genNext()">Next</button>
+                    </div>
+                </div>
+
+                <!-- Generate: verify phase -->
+                <div id="mnem-verify" class="mnemonic-wizard hidden">
+                    <div class="progress"><div class="progress-fill" id="verify-progress"></div></div>
+                    <div class="word-num" id="verify-word-num">Verify word 1 of 24</div>
+                    <p class="instruction">Type the word you wrote down to confirm your backup.</p>
+                    <div class="typeahead-wrap" id="verify-typeahead">
+                        <input type="text" autocomplete="off" spellcheck="false" placeholder="Type word...">
+                        <div class="typeahead-suggestions"></div>
+                    </div>
+                    <div class="nav-row">
+                        <button class="btn btn-primary" id="verify-prev" onclick="verifyPrev()" disabled>Previous</button>
+                    </div>
+                </div>
+
+                <!-- Recover: word-by-word entry -->
+                <div id="mnem-recover" class="mnemonic-wizard hidden">
+                    <div class="progress"><div class="progress-fill" id="recover-progress"></div></div>
+                    <div class="word-num" id="recover-word-num">Word 1 of 24</div>
+                    <div class="typeahead-wrap" id="recover-typeahead">
+                        <input type="text" autocomplete="off" spellcheck="false" placeholder="Type word...">
+                        <div class="typeahead-suggestions"></div>
+                    </div>
+                    <div class="nav-row">
+                        <button class="btn btn-primary" id="recover-prev" onclick="recoverPrev()" disabled>Previous</button>
+                    </div>
+                </div>
+
+                <!-- Start button (shown before generate begins) -->
+                <button class="btn btn-primary" id="mnem-start-btn" onclick="startGenerate()">Generate 24-word mnemonic</button>
+
+                <!-- Passphrase (shown after mnemonic is complete) -->
+                <div id="mnem-passphrase" class="hidden">
+                    <div class="field">
+                        <label>Passphrase (optional)</label>
+                        <input type="password" id="tree-passphrase" placeholder="Leave blank if none" autocomplete="off">
+                    </div>
                 </div>
             </div>
 
@@ -285,12 +358,251 @@
             return status === true ? 'Connected' : status === false ? 'Disconnected' : 'Unknown';
         }
 
+        // --- BIP-39 wordlist (loaded from backend) ---
+        let bip39Words = [];
+
+        async function loadWordlist() {
+            try {
+                const res = await fetch('/api/wordlist');
+                const data = await res.json();
+                bip39Words = data.words;
+            } catch (e) {
+                console.error('Failed to load wordlist:', e);
+            }
+        }
+
+        // --- Type-ahead component ---
+        function createTypeahead(container, { onAccept, validate }) {
+            const input = container.querySelector('input');
+            const suggestions = container.querySelector('.typeahead-suggestions');
+            let activeIdx = -1;
+            let matches = [];
+
+            function updateSuggestions() {
+                const val = input.value.toLowerCase().trim();
+                if (!val) { suggestions.classList.remove('visible'); matches = []; return; }
+                matches = bip39Words.filter(w => w.startsWith(val)).slice(0, 5);
+                if (matches.length === 0) { suggestions.classList.remove('visible'); return; }
+                suggestions.innerHTML = matches.map((w, i) =>
+                    `<div class="suggestion${i === activeIdx ? ' active' : ''}" data-idx="${i}">${w}</div>`
+                ).join('');
+                suggestions.classList.add('visible');
+            }
+
+            function accept(word) {
+                input.value = '';
+                suggestions.classList.remove('visible');
+                activeIdx = -1;
+                matches = [];
+                if (validate && !validate(word)) {
+                    input.classList.add('error');
+                    setTimeout(() => input.classList.remove('error'), 300);
+                    input.focus();
+                    return;
+                }
+                onAccept(word);
+            }
+
+            input.addEventListener('input', () => { activeIdx = -1; updateSuggestions(); });
+
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    activeIdx = Math.min(activeIdx + 1, matches.length - 1);
+                    updateSuggestions();
+                } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    activeIdx = Math.max(activeIdx - 1, 0);
+                    updateSuggestions();
+                } else if (e.key === 'Enter' || e.key === 'Tab') {
+                    e.preventDefault();
+                    const word = activeIdx >= 0 ? matches[activeIdx] : matches[0];
+                    if (word) accept(word);
+                }
+            });
+
+            suggestions.addEventListener('click', (e) => {
+                const el = e.target.closest('.suggestion');
+                if (el) accept(matches[parseInt(el.dataset.idx)]);
+            });
+
+            return { focus: () => input.focus(), reset: () => { input.value = ''; suggestions.classList.remove('visible'); } };
+        }
+
         function selectMode(mode) {
             currentMode = mode;
             document.querySelectorAll('.mode-card').forEach(c =>
                 c.classList.toggle('selected', c.dataset.mode === mode));
             ['bunker', 'tree-mnemonic', 'tree-nsec'].forEach(m =>
                 document.getElementById('fields-' + m).classList.toggle('hidden', m !== mode));
+        }
+
+        let mnemonicMode = 'generate';
+
+        function setMnemonicMode(mode) {
+            mnemonicMode = mode;
+            document.querySelectorAll('.mode-toggle button').forEach((btn, i) =>
+                btn.classList.toggle('active', (i === 0 && mode === 'generate') || (i === 1 && mode === 'recover')));
+
+            document.getElementById('mnem-generate').classList.add('hidden');
+            document.getElementById('mnem-verify').classList.add('hidden');
+            document.getElementById('mnem-recover').classList.add('hidden');
+            document.getElementById('mnem-passphrase').classList.add('hidden');
+
+            if (mode === 'generate') {
+                document.getElementById('mnem-start-btn').classList.remove('hidden');
+                document.getElementById('mnem-start-btn').textContent = 'Generate 24-word mnemonic';
+            } else {
+                document.getElementById('mnem-start-btn').classList.add('hidden');
+                document.getElementById('mnem-recover').classList.remove('hidden');
+                recoverReset();
+            }
+        }
+
+        // --- Generate flow ---
+        let generatedWords = [];
+        let genIndex = 0;
+
+        async function startGenerate() {
+            const btn = document.getElementById('mnem-start-btn');
+            btn.disabled = true;
+            btn.textContent = 'Generating...';
+
+            try {
+                const res = await fetch('/api/generate-mnemonic');
+                const data = await res.json();
+                if (!res.ok) { showMsg('Error: ' + data.error, false); btn.disabled = false; btn.textContent = 'Generate 24-word mnemonic'; return; }
+                generatedWords = data.words;
+                genIndex = 0;
+                btn.classList.add('hidden');
+                document.getElementById('mnem-generate').classList.remove('hidden');
+                genShow();
+            } catch (e) {
+                showMsg('Connection failed: ' + e.message, false);
+                btn.disabled = false;
+                btn.textContent = 'Generate 24-word mnemonic';
+            }
+        }
+
+        function genShow() {
+            document.getElementById('gen-word-num').textContent = `Word ${genIndex + 1} of 24`;
+            document.getElementById('gen-word-display').textContent = generatedWords[genIndex];
+            document.getElementById('gen-progress').style.width = `${((genIndex + 1) / 24) * 100}%`;
+            document.getElementById('gen-prev').disabled = genIndex === 0;
+            document.getElementById('gen-next').textContent = genIndex === 23 ? 'Verify backup' : 'Next';
+        }
+
+        function genPrev() {
+            if (genIndex > 0) { genIndex--; genShow(); }
+        }
+
+        function genNext() {
+            if (genIndex < 23) {
+                genIndex++;
+                genShow();
+            } else {
+                document.getElementById('mnem-generate').classList.add('hidden');
+                document.getElementById('mnem-verify').classList.remove('hidden');
+                verifyReset();
+            }
+        }
+
+        // --- Verify flow ---
+        let verifyIndex = 0;
+        let verifyTypeahead = null;
+
+        function verifyReset() {
+            verifyIndex = 0;
+            verifyShow();
+            if (!verifyTypeahead) {
+                verifyTypeahead = createTypeahead(document.getElementById('verify-typeahead'), {
+                    onAccept: verifyAccept,
+                    validate: (word) => word === generatedWords[verifyIndex],
+                });
+            }
+            verifyTypeahead.reset();
+            verifyTypeahead.focus();
+        }
+
+        function verifyShow() {
+            document.getElementById('verify-word-num').textContent = `Verify word ${verifyIndex + 1} of 24`;
+            document.getElementById('verify-progress').style.width = `${((verifyIndex + 1) / 24) * 100}%`;
+            document.getElementById('verify-prev').disabled = verifyIndex === 0;
+        }
+
+        function verifyAccept(word) {
+            if (word !== generatedWords[verifyIndex]) return;
+            verifyIndex++;
+            if (verifyIndex >= 24) {
+                document.getElementById('mnem-verify').classList.add('hidden');
+                document.getElementById('mnem-passphrase').classList.remove('hidden');
+                document.getElementById('fields-tree-mnemonic').dataset.mnemonic = generatedWords.join(' ');
+                showMsg('Backup verified! Set a passphrase (optional) and PIN to continue.', true);
+                return;
+            }
+            verifyShow();
+            verifyTypeahead.reset();
+            verifyTypeahead.focus();
+        }
+
+        function verifyPrev() {
+            if (verifyIndex > 0) {
+                verifyIndex--;
+                verifyShow();
+                verifyTypeahead.reset();
+                verifyTypeahead.focus();
+            }
+        }
+
+        // --- Recover flow ---
+        let recoverWords = [];
+        let recoverIndex = 0;
+        let recoverTypeahead = null;
+
+        function recoverReset() {
+            recoverWords = [];
+            recoverIndex = 0;
+            recoverShow();
+            if (!recoverTypeahead) {
+                recoverTypeahead = createTypeahead(document.getElementById('recover-typeahead'), {
+                    onAccept: recoverAccept,
+                    validate: (word) => bip39Words.includes(word),
+                });
+            }
+            recoverTypeahead.reset();
+            recoverTypeahead.focus();
+        }
+
+        function recoverShow() {
+            document.getElementById('recover-word-num').textContent = `Word ${recoverIndex + 1} of 24`;
+            document.getElementById('recover-progress').style.width = `${((recoverIndex + 1) / 24) * 100}%`;
+            document.getElementById('recover-prev').disabled = recoverIndex === 0;
+        }
+
+        function recoverAccept(word) {
+            recoverWords[recoverIndex] = word;
+            recoverIndex++;
+            if (recoverIndex >= 24) {
+                const mnemonic = recoverWords.join(' ');
+                document.getElementById('mnem-recover').classList.add('hidden');
+                document.getElementById('mnem-passphrase').classList.remove('hidden');
+                document.getElementById('fields-tree-mnemonic').dataset.mnemonic = mnemonic;
+                showMsg('Mnemonic entered. Set a passphrase (optional) and PIN to continue.', true);
+                return;
+            }
+            recoverShow();
+            recoverTypeahead.reset();
+            recoverTypeahead.focus();
+        }
+
+        function recoverPrev() {
+            if (recoverIndex > 0) {
+                recoverIndex--;
+                recoverWords.pop();
+                recoverShow();
+                recoverTypeahead.reset();
+                recoverTypeahead.focus();
+            }
         }
 
         function showMsg(text, ok) {
@@ -322,8 +634,8 @@
                 if (!nsec) { btn.disabled = false; btn.textContent = 'Initialise'; return; }
                 body.nsec = nsec;
             } else if (currentMode === 'tree-mnemonic') {
-                const mnemonic = document.getElementById('tree-mnemonic').value.trim();
-                if (!mnemonic) { btn.disabled = false; btn.textContent = 'Initialise'; return; }
+                const mnemonic = document.getElementById('fields-tree-mnemonic').dataset.mnemonic;
+                if (!mnemonic) { showMsg('Complete the mnemonic flow first', false); btn.disabled = false; btn.textContent = 'Initialise'; return; }
                 body.mnemonic = mnemonic;
                 const pass = document.getElementById('tree-passphrase').value;
                 if (pass) body.passphrase = pass;
@@ -877,6 +1189,7 @@
 
                 if (d.setup_required) {
                     document.getElementById('setup').classList.remove('hidden');
+                    loadWordlist();
                 } else if (d.encryption_required) {
                     // Legacy plaintext secret — needs PIN to encrypt
                     document.getElementById('encrypt-required').classList.remove('hidden');
