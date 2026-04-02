@@ -179,6 +179,9 @@ function isApproved(pubkey) {
   return Object.prototype.hasOwnProperty.call(approvedClients, pubkey)
 }
 
+/** Maximum number of pending client entries to prevent disk-write DoS. */
+const MAX_PENDING_CLIENTS = 200
+
 /** Record a pending client connection attempt. */
 function recordPending(pubkey) {
   const now = new Date().toISOString()
@@ -186,6 +189,20 @@ function recordPending(pubkey) {
     pendingClients[pubkey].lastSeen = now
     pendingClients[pubkey].attempts += 1
   } else {
+    // Cap pending entries to prevent unbounded growth from rotating pubkeys
+    const keys = Object.keys(pendingClients)
+    if (keys.length >= MAX_PENDING_CLIENTS) {
+      // Evict oldest entry
+      let oldestKey = keys[0]
+      let oldestTime = pendingClients[oldestKey].firstSeen
+      for (const k of keys) {
+        if (pendingClients[k].firstSeen < oldestTime) {
+          oldestTime = pendingClients[k].firstSeen
+          oldestKey = k
+        }
+      }
+      delete pendingClients[oldestKey]
+    }
     pendingClients[pubkey] = { firstSeen: now, lastSeen: now, attempts: 1 }
     console.log(`New pending client: ${pubkey.slice(0, 12)}...`)
   }
@@ -395,6 +412,10 @@ async function handleRequest(event) {
     }
 
     case 'sign_event': {
+      if (!Array.isArray(request.params) || typeof request.params[0] !== 'string') {
+        error = 'sign_event: missing event template'
+        break
+      }
       const template = JSON.parse(request.params[0])
       // Kind restriction check
       if (template.kind !== undefined && !isKindAllowed(clientPk, template.kind)) {
@@ -408,6 +429,10 @@ async function handleRequest(event) {
     }
 
     case 'nip44_encrypt': {
+      if (!Array.isArray(request.params) || request.params.length < 2) {
+        error = 'nip44_encrypt: requires [peer_pubkey, plaintext]'
+        break
+      }
       const active = getActiveSigningKey()
       const ck = getConversationKey(active.sk, request.params[0])
       result = encrypt(request.params[1], ck)
@@ -415,6 +440,10 @@ async function handleRequest(event) {
     }
 
     case 'nip44_decrypt': {
+      if (!Array.isArray(request.params) || request.params.length < 2) {
+        error = 'nip44_decrypt: requires [peer_pubkey, ciphertext]'
+        break
+      }
       const active = getActiveSigningKey()
       const ck = getConversationKey(active.sk, request.params[0])
       result = decrypt(request.params[1], ck)
