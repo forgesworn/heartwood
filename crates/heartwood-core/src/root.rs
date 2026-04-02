@@ -61,6 +61,11 @@ pub fn from_nsec(nsec: &str) -> Result<TreeRoot, HeartwoodError> {
 ///
 /// Returns the words as a `Vec<String>`. The caller is responsible for
 /// displaying them to the user and not logging or persisting them.
+///
+/// **Note:** The entropy bytes are zeroised on drop, but `bip39::Mnemonic`
+/// does not implement `ZeroizeOnDrop` — the word representation remains in
+/// heap memory until freed by the allocator. Acceptable for a setup-time
+/// operation on a single-user device.
 pub fn generate_mnemonic() -> Result<Vec<String>, HeartwoodError> {
     use bip39::Mnemonic;
     use rand_core::OsRng;
