@@ -871,9 +871,13 @@ async fn api_set_tor(
     }
 }
 
-/// Read the Tor .onion address from the hidden service directory.
+/// Read the Tor .onion address from the copied hostname file.
+///
+/// The Tor hidden service directory (`/var/lib/tor/heartwood/`) is restricted
+/// to `debian-tor` with mode 0700. A systemd drop-in copies the hostname file
+/// to `/var/lib/heartwood/tor-hostname` where the heartwood user can read it.
 fn read_onion_address() -> Option<String> {
-    std::fs::read_to_string("/var/lib/tor/heartwood/hostname")
+    std::fs::read_to_string("/var/lib/heartwood/tor-hostname")
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())

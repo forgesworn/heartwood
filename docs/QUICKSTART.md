@@ -139,6 +139,14 @@ This works from any network — VPN, coffee shop WiFi, your phone on mobile data
 - Check the bunker is running: `ssh satoshi@heartwood.local "sudo systemctl status heartwood-bunker"`
 - Restart the bunker: `ssh satoshi@heartwood.local "sudo systemctl restart heartwood-bunker"`
 
+**Tor not working / .onion address missing?**
+- Check if Tor is running: `ssh satoshi@heartwood.local "sudo systemctl status tor@default"`
+- If Tor failed with "Permissions on directory too permissive", fix it:
+  ```bash
+  ssh satoshi@heartwood.local "sudo chmod 0700 /var/lib/tor/heartwood/ && sudo systemctl restart tor@default"
+  ```
+- After Tor restarts, restart the bunker too: `ssh satoshi@heartwood.local "sudo systemctl restart heartwood-bunker"`
+
 **Forgot your PIN?**
 - SSH into the Pi and delete the encrypted secret, then set up again:
   ```bash
