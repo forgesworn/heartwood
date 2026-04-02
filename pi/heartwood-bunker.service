@@ -37,6 +37,9 @@ ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
 RestrictNamespaces=true
+DevicePolicy=closed
+MemoryMax=256M
+TasksMax=32
 
 [Install]
 WantedBy=multi-user.target

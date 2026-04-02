@@ -3,6 +3,17 @@
  * No I/O, no global state — all state is passed as parameters.
  */
 
+const HEX_PUBKEY_RE = /^[0-9a-f]{64}$/
+
+/**
+ * Validate that a value is a 64-character lowercase hex public key.
+ * @param {unknown} value
+ * @returns {boolean}
+ */
+export function isValidHexPubkey(value) {
+  return typeof value === 'string' && HEX_PUBKEY_RE.test(value)
+}
+
 /**
  * Parse --authorized-keys from CLI argv.
  * @param {string[]} argv - process.argv or equivalent

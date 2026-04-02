@@ -22,6 +22,7 @@ import {
   parseAuthorizedKeys,
   isApproved,
   isKindAllowed,
+  isValidHexPubkey,
   recordPending,
   tryAutoApprove,
   checkRateLimit,
@@ -119,22 +120,34 @@ if (personaConfig.activePubkey) {
   activePersonaPubkey = personaConfig.activePubkey
 }
 
-/** Get the currently active signing key and pubkey. */
+/**
+ * Get the currently active signing key and pubkey.
+ * When a persona is active, the private key is re-derived on each call.
+ * Call `releaseKey(result)` after use to zero derived key material.
+ */
 function getActiveSigningKey() {
   if (!activePersonaPubkey) {
-    return { sk: userSk, pk: userPk }
+    return { sk: userSk, pk: userPk, ephemeral: false }
   }
   const persona = personas.find((p) => p.pubkey === activePersonaPubkey)
   if (!persona) {
     // Persona was removed — fall back to master
     activePersonaPubkey = null
-    return { sk: userSk, pk: userPk }
+    return { sk: userSk, pk: userPk, ephemeral: false }
   }
   // Re-derive the private key from the tree root
   const derived = derivePersona(treeRoot, persona.name, persona.index)
   return {
     sk: derived.identity.privateKey,
     pk: bytesToHex(derived.identity.publicKey),
+    ephemeral: true,
+  }
+}
+
+/** Zero ephemeral key material after use. No-op for the persistent master key. */
+function releaseKey(active) {
+  if (active.ephemeral && active.sk instanceof Uint8Array) {
+    active.sk.fill(0)
   }
 }
 
@@ -203,6 +216,27 @@ const RATE_WINDOW_MS = 60_000
 /** Map of client pubkey → array of request timestamps (epoch ms). */
 const rateBuckets = new Map()
 
+/** Maximum number of rate bucket entries to prevent unbounded memory growth. */
+const MAX_RATE_BUCKETS = 500
+
+/** Periodic cleanup: remove expired rate bucket entries every 2 minutes. */
+setInterval(() => {
+  const cutoff = Date.now() - RATE_WINDOW_MS
+  for (const [key, timestamps] of rateBuckets) {
+    // Remove entries where all timestamps have expired
+    if (timestamps.length === 0 || timestamps[timestamps.length - 1] < cutoff) {
+      rateBuckets.delete(key)
+    }
+  }
+  // If still over capacity, evict oldest entries
+  if (rateBuckets.size > MAX_RATE_BUCKETS) {
+    const toRemove = rateBuckets.size - MAX_RATE_BUCKETS
+    const keys = rateBuckets.keys()
+    for (let i = 0; i < toRemove; i++) {
+      rateBuckets.delete(keys.next().value)
+    }
+  }
+}, 120_000)
 
 // --- 3. Load or generate bunker keypair ---
 
@@ -373,6 +407,7 @@ async function handleRequest(event) {
     case 'get_public_key': {
       const active = getActiveSigningKey()
       result = active.pk
+      releaseKey(active)
       break
     }
 
@@ -388,14 +423,27 @@ async function handleRequest(event) {
         error = 'sign_event: invalid event JSON'
         break
       }
-      // Kind restriction check
-      if (template.kind !== undefined && !isKindAllowed(clientPk, template.kind, approvedClients)) {
+      // Validate template is a non-null object with a numeric kind
+      if (typeof template !== 'object' || template === null || Array.isArray(template)) {
+        error = 'sign_event: template must be a JSON object'
+        break
+      }
+      if (typeof template.kind !== 'number' || !Number.isInteger(template.kind) || template.kind < 0) {
+        error = 'sign_event: template must include a non-negative integer kind'
+        break
+      }
+      // Kind restriction check (always enforced — kind is guaranteed present)
+      if (!isKindAllowed(clientPk, template.kind, approvedClients)) {
         error = `signing kind ${template.kind} not permitted for this client`
         break
       }
       const active = getActiveSigningKey()
-      const signed = finalizeEvent(template, active.sk)
-      result = JSON.stringify(signed)
+      try {
+        const signed = finalizeEvent(template, active.sk)
+        result = JSON.stringify(signed)
+      } finally {
+        releaseKey(active)
+      }
       break
     }
 
@@ -404,9 +452,17 @@ async function handleRequest(event) {
         error = 'nip44_encrypt: requires [peer_pubkey, plaintext]'
         break
       }
+      if (!isValidHexPubkey(request.params[0])) {
+        error = 'nip44_encrypt: peer_pubkey must be a 64-character hex string'
+        break
+      }
       const active = getActiveSigningKey()
-      const ck = getConversationKey(active.sk, request.params[0])
-      result = encrypt(request.params[1], ck)
+      try {
+        const ck = getConversationKey(active.sk, request.params[0])
+        result = encrypt(request.params[1], ck)
+      } finally {
+        releaseKey(active)
+      }
       break
     }
 
@@ -415,9 +471,17 @@ async function handleRequest(event) {
         error = 'nip44_decrypt: requires [peer_pubkey, ciphertext]'
         break
       }
+      if (!isValidHexPubkey(request.params[0])) {
+        error = 'nip44_decrypt: peer_pubkey must be a 64-character hex string'
+        break
+      }
       const active = getActiveSigningKey()
-      const ck = getConversationKey(active.sk, request.params[0])
-      result = decrypt(request.params[1], ck)
+      try {
+        const ck = getConversationKey(active.sk, request.params[0])
+        result = decrypt(request.params[1], ck)
+      } finally {
+        releaseKey(active)
+      }
       break
     }
 
@@ -439,7 +503,16 @@ async function handleRequest(event) {
 
     case 'heartwood_derive': {
       const name = request.params[0]
-      const index = parseInt(request.params[1] ?? '0', 10)
+      if (typeof name !== 'string' || name.length === 0 || name.length > 64) {
+        error = 'heartwood_derive: name must be a non-empty string (max 64 chars)'
+        break
+      }
+      const rawIndex = parseInt(request.params[1] ?? '0', 10)
+      if (!Number.isInteger(rawIndex) || rawIndex < 0 || rawIndex > 0xFFFFFFFF) {
+        error = 'heartwood_derive: index must be a non-negative integer'
+        break
+      }
+      const index = rawIndex
 
       // Check for duplicate
       const existing = personas.find((p) => p.name === name && p.index === index)

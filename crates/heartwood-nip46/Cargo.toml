@@ -20,4 +20,10 @@ signature = "2"
 hex = "0.4"
 zeroize = "1"
 
+[features]
+default = []
+test-helpers = []
+
 [dev-dependencies]
+heartwood-nip46 = { path = ".", features = ["test-helpers"] }
+
