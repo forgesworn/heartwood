@@ -86,6 +86,15 @@ pub struct AppState {
     pub decrypted_payload: Mutex<Option<String>>,
     /// PIN unlock brute-force throttle.
     pub unlock_throttle: Mutex<UnlockThrottle>,
+    /// Instance data directory (read from `HEARTWOOD_DATA_DIR` env var).
+    pub data_dir: std::path::PathBuf,
+}
+
+impl AppState {
+    /// Build a path to a file in the instance data directory.
+    fn data_file(&self, name: &str) -> String {
+        self.data_dir.join(name).to_string_lossy().to_string()
+    }
 }
 
 /// Serve the bundled `index.html`.
@@ -181,14 +190,14 @@ async fn api_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
             "has_password": has_password,
             "tor_enabled": tor_enabled,
             "relays": relays,
-            "onion_address": read_onion_address()
+            "onion_address": read_onion_address(&state.data_dir)
         }));
     }
 
     let (mode, npub) = parse_payload(payload_guard.as_deref().unwrap_or(""));
 
     // Read bunker URI if available
-    let bunker_uri = std::fs::read_to_string("/var/lib/heartwood/bunker-uri.txt")
+    let bunker_uri = std::fs::read_to_string(state.data_file("bunker-uri.txt"))
         .ok()
         .map(|s| s.trim().to_string());
 
@@ -203,7 +212,7 @@ async fn api_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         "npub": npub,
         "relays": relays,
         "bunker_uri": bunker_uri,
-        "onion_address": read_onion_address()
+        "onion_address": read_onion_address(&state.data_dir)
     }))
 }
 
@@ -850,7 +859,7 @@ async fn api_set_relays(
         Ok(()) => {
             info!("Relay list updated: {} relays", relays.len());
             // Recompute the bunker URI so the web UI picks up the change immediately
-            rewrite_bunker_uri(&relays);
+            rewrite_bunker_uri(&relays, &state.data_dir);
             (StatusCode::OK, axum::Json(json!({ "relays": relays })))
         }
         Err(e) => {
@@ -869,11 +878,11 @@ async fn api_set_relays(
 /// rebuilds the URI with the new relay list. The bunker sidecar will also
 /// recompute this when its config file watcher fires, but writing it here
 /// ensures the web UI sees the update immediately.
-fn rewrite_bunker_uri(relays: &[String]) {
-    const BUNKER_URI_PATH: &str = "/var/lib/heartwood/bunker-uri.txt";
+fn rewrite_bunker_uri(relays: &[String], data_dir: &std::path::Path) {
+    let bunker_uri_path = data_dir.join("bunker-uri.txt");
 
     // Parse the existing URI to extract the bunker public key
-    let existing = match std::fs::read_to_string(BUNKER_URI_PATH) {
+    let existing = match std::fs::read_to_string(&bunker_uri_path) {
         Ok(s) => s.trim().to_string(),
         Err(_) => return, // bunker not running yet — nothing to rewrite
     };
@@ -885,9 +894,7 @@ fn rewrite_bunker_uri(relays: &[String]) {
 
     let uri = build_bunker_uri(bunker_pk, relays);
 
-    if let Err(e) =
-        storage::write_secret_file(std::path::Path::new(BUNKER_URI_PATH), uri.as_bytes())
-    {
+    if let Err(e) = storage::write_secret_file(&bunker_uri_path, uri.as_bytes()) {
         tracing::warn!("Could not rewrite bunker URI: {e}");
     }
 }
@@ -928,8 +935,8 @@ fn build_bunker_uri(pubkey: &str, relays: &[String]) -> String {
 }
 
 /// `GET /api/bunker` — return the bunker URI if the bunker sidecar has written one.
-async fn api_bunker() -> impl IntoResponse {
-    match std::fs::read_to_string("/var/lib/heartwood/bunker-uri.txt") {
+async fn api_bunker(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    match std::fs::read_to_string(state.data_file("bunker-uri.txt")) {
         Ok(uri) => axum::Json(json!({"uri": uri.trim()})),
         Err(_) => axum::Json(json!({"uri": null, "message": "bunker not running"})),
     }
@@ -939,8 +946,8 @@ async fn api_bunker() -> impl IntoResponse {
 ///
 /// The bunker sidecar writes `bunker-status.json` every 15 seconds with per-relay
 /// connection state. Returns an empty relays object if the file is missing.
-async fn api_bunker_status() -> impl IntoResponse {
-    let val = tokio::fs::read_to_string("/var/lib/heartwood/bunker-status.json")
+async fn api_bunker_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let val = tokio::fs::read_to_string(state.data_file("bunker-status.json"))
         .await
         .ok()
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
@@ -1075,9 +1082,9 @@ async fn api_set_tor(
 ///
 /// The Tor hidden service directory (`/var/lib/tor/heartwood/`) is restricted
 /// to `debian-tor` with mode 0700. A systemd drop-in copies the hostname file
-/// to `/var/lib/heartwood/tor-hostname` where the heartwood user can read it.
-fn read_onion_address() -> Option<String> {
-    std::fs::read_to_string("/var/lib/heartwood/tor-hostname")
+/// to `<data_dir>/tor-hostname` where the heartwood user can read it.
+fn read_onion_address(data_dir: &std::path::Path) -> Option<String> {
+    std::fs::read_to_string(data_dir.join("tor-hostname"))
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
@@ -1088,7 +1095,7 @@ async fn api_get_tor(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let storage = state.storage.lock().await;
     let tor_enabled =
         load_config(&storage).get("tor_enabled").and_then(|v| v.as_bool()).unwrap_or(false);
-    let onion_address = read_onion_address();
+    let onion_address = read_onion_address(&state.data_dir);
     axum::Json(json!({
         "tor_enabled": tor_enabled,
         "onion_address": onion_address,
@@ -1125,9 +1132,9 @@ async fn api_audit(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 // --- Client management (bunker allowlist) ---
 
 /// `GET /api/clients` — return approved and pending clients.
-async fn api_get_clients() -> impl IntoResponse {
-    let approved = load_clients_file("/var/lib/heartwood/clients.json");
-    let pending = load_clients_file("/var/lib/heartwood/pending-clients.json");
+async fn api_get_clients(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let approved = load_clients_file(&state.data_file("clients.json"));
+    let pending = load_clients_file(&state.data_file("pending-clients.json"));
     axum::Json(json!({ "approved": approved, "pending": pending }))
 }
 
@@ -1141,7 +1148,10 @@ struct ApproveClient {
 }
 
 /// `POST /api/clients/approve` — approve a pending client pubkey.
-async fn api_approve_client(axum::Json(req): axum::Json<ApproveClient>) -> impl IntoResponse {
+async fn api_approve_client(
+    State(state): State<Arc<AppState>>,
+    axum::Json(req): axum::Json<ApproveClient>,
+) -> impl IntoResponse {
     // Validate hex pubkey format
     if req.pubkey.len() != 64 || !req.pubkey.chars().all(|c| c.is_ascii_hexdigit()) {
         return (
@@ -1150,7 +1160,7 @@ async fn api_approve_client(axum::Json(req): axum::Json<ApproveClient>) -> impl 
         );
     }
 
-    let mut approved = load_clients_file("/var/lib/heartwood/clients.json");
+    let mut approved = load_clients_file(&state.data_file("clients.json"));
     if !approved.is_object() {
         approved = json!({});
     }
@@ -1166,7 +1176,7 @@ async fn api_approve_client(axum::Json(req): axum::Json<ApproveClient>) -> impl 
     }
     approved_obj.insert(req.pubkey.clone(), entry);
 
-    if let Err(e) = write_clients_file("/var/lib/heartwood/clients.json", &approved) {
+    if let Err(e) = write_clients_file(&state.data_file("clients.json"), &approved) {
         tracing::error!("Failed to save clients.json: {e}");
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1175,10 +1185,10 @@ async fn api_approve_client(axum::Json(req): axum::Json<ApproveClient>) -> impl 
     }
 
     // Remove from pending
-    let mut pending = load_clients_file("/var/lib/heartwood/pending-clients.json");
+    let mut pending = load_clients_file(&state.data_file("pending-clients.json"));
     if let Some(obj) = pending.as_object_mut() {
         obj.remove(&req.pubkey);
-        let _ = write_clients_file("/var/lib/heartwood/pending-clients.json", &pending);
+        let _ = write_clients_file(&state.data_file("pending-clients.json"), &pending);
     }
 
     info!("Approved client: {}...", &req.pubkey[..12]);
@@ -1191,11 +1201,14 @@ struct RevokeClient {
 }
 
 /// `POST /api/clients/revoke` — remove a client from the approved list.
-async fn api_revoke_client(axum::Json(req): axum::Json<RevokeClient>) -> impl IntoResponse {
-    let mut approved = load_clients_file("/var/lib/heartwood/clients.json");
+async fn api_revoke_client(
+    State(state): State<Arc<AppState>>,
+    axum::Json(req): axum::Json<RevokeClient>,
+) -> impl IntoResponse {
+    let mut approved = load_clients_file(&state.data_file("clients.json"));
     if let Some(obj) = approved.as_object_mut() {
         obj.remove(&req.pubkey);
-        if let Err(e) = write_clients_file("/var/lib/heartwood/clients.json", &approved) {
+        if let Err(e) = write_clients_file(&state.data_file("clients.json"), &approved) {
             tracing::error!("Failed to save clients.json: {e}");
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -1208,16 +1221,16 @@ async fn api_revoke_client(axum::Json(req): axum::Json<RevokeClient>) -> impl In
 }
 
 /// `POST /api/clients/clear` — remove all approved and pending clients.
-async fn api_clear_clients() -> impl IntoResponse {
+async fn api_clear_clients(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let empty = json!({});
-    if let Err(e) = write_clients_file("/var/lib/heartwood/clients.json", &empty) {
+    if let Err(e) = write_clients_file(&state.data_file("clients.json"), &empty) {
         tracing::error!("Failed to clear clients.json: {e}");
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             axum::Json(json!({"error": "failed to clear approved clients"})),
         );
     }
-    if let Err(e) = write_clients_file("/var/lib/heartwood/pending-clients.json", &empty) {
+    if let Err(e) = write_clients_file(&state.data_file("pending-clients.json"), &empty) {
         tracing::error!("Failed to clear pending-clients.json: {e}");
         return (
             StatusCode::INTERNAL_SERVER_ERROR,

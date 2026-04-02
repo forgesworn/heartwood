@@ -17,18 +17,13 @@ pub struct TorManager {
 }
 
 impl TorManager {
-    /// Create a manager using the default hostname file location.
+    /// Create a manager pointing at the given data directory.
     ///
-    /// The systemd unit copies the Tor hostname file to `/var/lib/heartwood/`
+    /// The systemd unit copies the Tor hostname file to the data directory
     /// before starting, since the Tor hidden service directory is restricted
     /// to the `debian-tor` user.
-    pub fn new() -> Self {
-        Self { onion_dir: PathBuf::from("/var/lib/heartwood") }
-    }
-
-    /// Create a manager with a custom onion directory path.
-    pub fn with_dir(onion_dir: PathBuf) -> Self {
-        Self { onion_dir }
+    pub fn new(data_dir: PathBuf) -> Self {
+        Self { onion_dir: data_dir }
     }
 
     /// Read the `.onion` hostname from the copied `tor-hostname` file, if present.
@@ -77,6 +72,6 @@ impl TorManager {
 
 impl Default for TorManager {
     fn default() -> Self {
-        Self::new()
+        Self::new(PathBuf::from("/var/lib/heartwood"))
     }
 }
