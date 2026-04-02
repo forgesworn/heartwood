@@ -101,15 +101,19 @@ if [ "$DEPLOY" = true ]; then
     echo ""
     echo "=== Deploying update ==="
 
-    # Find all active heartwood instances and restart them.
-    # Restarting the device service automatically restarts the bunker (PartOf=).
+    # Find all active heartwood instances and restart them + their bunkers.
+    # PartOf= stops the bunker when the device stops, but does NOT restart it
+    # when the device starts again — we must restart both explicitly.
     RUNNING=$(systemctl list-units 'heartwood@*.service' --plain --no-legend --state=active | awk '{print $1}')
     if [ -z "$RUNNING" ]; then
         echo "No running instances found."
     else
         for unit in $RUNNING; do
-            echo "Restarting $unit ..."
-            sudo systemctl restart "$unit"
+            # Extract instance name: heartwood@personal.service → personal
+            INST="${unit#heartwood@}"
+            INST="${INST%.service}"
+            echo "Restarting $unit + bunker ..."
+            sudo systemctl restart "$unit" "heartwood-bunker@${INST}.service"
         done
         # Give the device services a moment to bind their ports
         sleep 2
