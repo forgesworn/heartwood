@@ -18,8 +18,26 @@ import WebSocket from 'ws'
 import { fromNsec } from 'nsec-tree/core'
 import { derivePersona } from 'nsec-tree/persona'
 import { bytesToHex } from 'nostr-tools/utils'
+import {
+  parseAuthorizedKeys,
+  isApproved,
+  isKindAllowed,
+  recordPending,
+  tryAutoApprove,
+  checkRateLimit,
+} from './lib.mjs'
 
 globalThis.WebSocket = WebSocket
+
+// --- 0. Parse CLI flags ---
+
+const { keys: authorizedKeys, warnings: akWarnings } = parseAuthorizedKeys(process.argv)
+for (const w of akWarnings) {
+  console.warn(`WARN: ignoring invalid authorized key: ${w}`)
+}
+if (authorizedKeys.size > 0) {
+  console.log(`Authorized keys: ${authorizedKeys.size} client(s) will be auto-approved`)
+}
 
 const DATA_DIR = '/var/lib/heartwood'
 const DEFAULT_RELAYS = [
@@ -174,47 +192,8 @@ let approvedClients = loadJson(clientsPath, {})
  */
 let pendingClients = loadJson(pendingClientsPath, {})
 
-/** Check if a client pubkey is approved. */
-function isApproved(pubkey) {
-  return Object.prototype.hasOwnProperty.call(approvedClients, pubkey)
-}
-
 /** Maximum number of pending client entries to prevent disk-write DoS. */
 const MAX_PENDING_CLIENTS = 200
-
-/** Record a pending client connection attempt. */
-function recordPending(pubkey) {
-  const now = new Date().toISOString()
-  if (pendingClients[pubkey]) {
-    pendingClients[pubkey].lastSeen = now
-    pendingClients[pubkey].attempts += 1
-  } else {
-    // Cap pending entries to prevent unbounded growth from rotating pubkeys
-    const keys = Object.keys(pendingClients)
-    if (keys.length >= MAX_PENDING_CLIENTS) {
-      // Evict oldest entry
-      let oldestKey = keys[0]
-      let oldestTime = pendingClients[oldestKey].firstSeen
-      for (const k of keys) {
-        if (pendingClients[k].firstSeen < oldestTime) {
-          oldestTime = pendingClients[k].firstSeen
-          oldestKey = k
-        }
-      }
-      delete pendingClients[oldestKey]
-    }
-    pendingClients[pubkey] = { firstSeen: now, lastSeen: now, attempts: 1 }
-    console.log(`New pending client: ${pubkey.slice(0, 12)}...`)
-  }
-  saveJson(pendingClientsPath, pendingClients)
-}
-
-/** Check if a signing kind is allowed for a given client. */
-function isKindAllowed(pubkey, kind) {
-  const client = approvedClients[pubkey]
-  if (!client || !client.allowedKinds) return true // no restriction
-  return client.allowedKinds.includes(kind)
-}
 
 // --- Per-client rate limiting (sliding window) ---
 
@@ -224,35 +203,6 @@ const RATE_WINDOW_MS = 60_000
 /** Map of client pubkey → array of request timestamps (epoch ms). */
 const rateBuckets = new Map()
 
-/**
- * Check if a client has exceeded their rate limit.
- * Returns true if the request should be allowed, false if rate-limited.
- */
-function checkRateLimit(pubkey) {
-  const now = Date.now()
-  let timestamps = rateBuckets.get(pubkey)
-  if (!timestamps) {
-    timestamps = []
-    rateBuckets.set(pubkey, timestamps)
-  }
-
-  // Prune entries older than the window
-  const cutoff = now - RATE_WINDOW_MS
-  while (timestamps.length > 0 && timestamps[0] < cutoff) {
-    timestamps.shift()
-  }
-
-  // Per-client limit from clients.json, or default
-  const client = approvedClients[pubkey]
-  const limit = client?.rateLimit ?? DEFAULT_RATE_LIMIT
-
-  if (timestamps.length >= limit) {
-    return false
-  }
-
-  timestamps.push(now)
-  return true
-}
 
 // --- 3. Load or generate bunker keypair ---
 
@@ -321,6 +271,9 @@ console.log(`Bunker started`)
 console.log(`  URI:     ${bunkerUri}`)
 console.log(`  Signing: ${userPk.slice(0, 12)}...`)
 console.log(`  Relays:  ${relays.join(', ')}`)
+if (authorizedKeys.size > 0) {
+  console.log(`  Auto-approve: ${[...authorizedKeys].map((k) => k.slice(0, 12) + '...').join(', ')}`)
+}
 
 // --- 6. Request handler ---
 
@@ -345,32 +298,39 @@ async function handleRequest(event) {
   // --- Client allowlist enforcement ---
   // connect, ping, and get_public_key are always allowed; signing and other methods require approval.
   if (request.method !== 'connect' && request.method !== 'ping' && request.method !== 'get_public_key') {
-    if (!isApproved(clientPk)) {
-      recordPending(clientPk)
-      error = 'client not approved — ask the device owner to approve your pubkey'
-      console.log(`Blocked unapproved client ${clientPk.slice(0, 12)}... (${request.method})`)
+    if (!isApproved(clientPk, approvedClients)) {
+      if (tryAutoApprove(clientPk, authorizedKeys, approvedClients)) {
+        saveJson(clientsPath, approvedClients)
+        console.log(`Auto-approved authorized client ${clientPk.slice(0, 12)}...`)
+      } else {
+        const isNew = recordPending(clientPk, pendingClients, MAX_PENDING_CLIENTS)
+        if (isNew) console.log(`New pending client: ${clientPk.slice(0, 12)}...`)
+        saveJson(pendingClientsPath, pendingClients)
+        error = 'client not approved — ask the device owner to approve your pubkey'
+        console.log(`Blocked unapproved client ${clientPk.slice(0, 12)}... (${request.method})`)
 
-      // Send error response and return early
-      const response = JSON.stringify({ id: request.id, result: '', error })
-      const encrypted = encrypt(response, conversationKey)
-      const responseEvent = finalizeEvent(
-        {
-          kind: 24133,
-          created_at: Math.floor(Date.now() / 1000),
-          tags: [['p', clientPk]],
-          content: encrypted,
-        },
-        bunkerSk,
-      )
-      await Promise.any(pool.publish(relays, responseEvent))
-      return
+        // Send error response and return early
+        const response = JSON.stringify({ id: request.id, result: '', error })
+        const encrypted = encrypt(response, conversationKey)
+        const responseEvent = finalizeEvent(
+          {
+            kind: 24133,
+            created_at: Math.floor(Date.now() / 1000),
+            tags: [['p', clientPk]],
+            content: encrypted,
+          },
+          bunkerSk,
+        )
+        await Promise.any(pool.publish(relays, responseEvent))
+        return
+      }
     }
   }
 
   // --- Rate limit enforcement ---
   // connect, ping, and get_public_key are exempt; all other methods are rate-limited.
   if (request.method !== 'connect' && request.method !== 'ping' && request.method !== 'get_public_key') {
-    if (!checkRateLimit(clientPk)) {
+    if (!checkRateLimit(clientPk, rateBuckets, approvedClients, DEFAULT_RATE_LIMIT, RATE_WINDOW_MS)) {
       error = 'rate limit exceeded — try again shortly'
       console.log(`Rate-limited ${clientPk.slice(0, 12)}... (${request.method})`)
 
@@ -392,13 +352,18 @@ async function handleRequest(event) {
 
   switch (request.method) {
     case 'connect':
-      if (!isApproved(clientPk)) {
-        recordPending(clientPk)
-        result = 'ack'
-        console.log(`Connect from unapproved client ${clientPk.slice(0, 12)}... — recorded as pending`)
-      } else {
-        result = 'ack'
+      if (!isApproved(clientPk, approvedClients)) {
+        if (tryAutoApprove(clientPk, authorizedKeys, approvedClients)) {
+          saveJson(clientsPath, approvedClients)
+          console.log(`Auto-approved authorized client ${clientPk.slice(0, 12)}...`)
+        } else {
+          const isNew = recordPending(clientPk, pendingClients, MAX_PENDING_CLIENTS)
+          if (isNew) console.log(`New pending client: ${clientPk.slice(0, 12)}...`)
+          saveJson(pendingClientsPath, pendingClients)
+          console.log(`Connect from unapproved client ${clientPk.slice(0, 12)}... — recorded as pending`)
+        }
       }
+      result = 'ack'
       break
 
     case 'ping':
@@ -424,7 +389,7 @@ async function handleRequest(event) {
         break
       }
       // Kind restriction check
-      if (template.kind !== undefined && !isKindAllowed(clientPk, template.kind)) {
+      if (template.kind !== undefined && !isKindAllowed(clientPk, template.kind, approvedClients)) {
         error = `signing kind ${template.kind} not permitted for this client`
         break
       }

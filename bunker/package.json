@@ -4,7 +4,8 @@
   "description": "NIP-46 remote signer sidecar for Heartwood",
   "type": "module",
   "scripts": {
-    "start": "node index.mjs"
+    "start": "node index.mjs",
+    "test": "node --test 'test/**/*.test.mjs'"
   },
   "dependencies": {
     "nostr-tools": "^2.23.0",
