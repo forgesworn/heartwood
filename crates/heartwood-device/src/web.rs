@@ -346,6 +346,40 @@ async fn api_setup(
     (StatusCode::OK, axum::Json(json!({"npub": npub, "mode": req.mode})))
 }
 
+/// `GET /api/generate-mnemonic` — generate a new 24-word BIP-39 mnemonic.
+///
+/// Only available in setup mode (no master secret stored).
+/// The mnemonic is returned once and not stored or logged server-side.
+async fn api_generate_mnemonic(
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    let storage = state.storage.lock().await;
+    if storage.has_master_secret() {
+        return (
+            StatusCode::CONFLICT,
+            axum::Json(json!({"error": "device already configured"})),
+        );
+    }
+    drop(storage);
+
+    match heartwood_core::generate_mnemonic() {
+        Ok(words) => (StatusCode::OK, axum::Json(json!({"words": words}))),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            axum::Json(json!({"error": format!("{e}")})),
+        ),
+    }
+}
+
+/// `GET /api/wordlist` — return the BIP-39 English wordlist (2048 words).
+///
+/// Public data, used by the frontend for type-ahead autocomplete.
+async fn api_wordlist() -> impl IntoResponse {
+    use bip39::Language;
+    let words: Vec<&str> = Language::English.word_list().to_vec();
+    (StatusCode::OK, axum::Json(json!({"words": words})))
+}
+
 #[derive(Deserialize)]
 struct ResetRequest {
     password: Option<String>,
@@ -659,7 +693,7 @@ async fn lock_middleware(
     let path = req.uri().path().to_string();
 
     // These endpoints work regardless of lock state
-    let unlocked_paths = ["/", "/api/status", "/api/unlock", "/api/set-pin", "/api/setup"];
+    let unlocked_paths = ["/", "/api/status", "/api/unlock", "/api/set-pin", "/api/setup", "/api/generate-mnemonic", "/api/wordlist"];
     if unlocked_paths.contains(&path.as_str()) {
         return next.run(req).await;
     }
@@ -1309,6 +1343,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/clients/approve", post(api_approve_client))
         .route("/api/clients/revoke", post(api_revoke_client))
         .route("/api/clients/clear", post(api_clear_clients))
+        .route("/api/generate-mnemonic", get(api_generate_mnemonic))
+        .route("/api/wordlist", get(api_wordlist))
         .layer(middleware::from_fn_with_state(state.clone(), lock_middleware))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
         .layer(DefaultBodyLimit::max(65536))
@@ -1429,5 +1465,101 @@ mod tests {
         let uri = build_bunker_uri(FAKE_PK, &relays);
         // The pubkey should be extractable from the built URI
         assert_eq!(parse_bunker_pubkey(&uri), Some(FAKE_PK));
+    }
+
+    use axum::body::Body;
+    use tower::ServiceExt; // for oneshot
+
+    /// Create an AppState in setup mode (no master secret).
+    fn test_state_setup() -> Arc<AppState> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::SeqCst);
+        let tmp = std::env::temp_dir()
+            .join(format!("heartwood-test-{}-{}", std::process::id(), n));
+        let _ = std::fs::create_dir_all(&tmp);
+        Arc::new(AppState {
+            audit_log: Mutex::new(AuditLog::new()),
+            storage: Mutex::new(Storage::new(Some(tmp.clone()))),
+            decrypted_payload: Mutex::new(None),
+            unlock_throttle: Mutex::new(UnlockThrottle::new()),
+            data_dir: tmp,
+        })
+    }
+
+    /// Create an AppState with a dummy master secret (configured mode).
+    async fn test_state_configured() -> Arc<AppState> {
+        let state = test_state_setup();
+        // Write a dummy encrypted secret so has_master_secret() returns true
+        let storage = state.storage.lock().await;
+        storage.save_master_secret(b"dummy-encrypted-data").unwrap();
+        drop(storage);
+        state
+    }
+
+    #[tokio::test]
+    async fn generate_mnemonic_returns_24_words_in_setup_mode() {
+        let state = test_state_setup();
+        let app = create_router(state);
+
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/api/generate-mnemonic")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap(),
+        )
+        .unwrap();
+        let words = body["words"].as_array().expect("words should be an array");
+        assert_eq!(words.len(), 24);
+    }
+
+    #[tokio::test]
+    async fn generate_mnemonic_blocked_when_configured() {
+        let state = test_state_configured().await;
+        let app = create_router(state);
+
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/api/generate-mnemonic")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn wordlist_returns_2048_words() {
+        let state = test_state_setup();
+        let app = create_router(state);
+
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/api/wordlist")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: serde_json::Value = serde_json::from_slice(
+            &axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap(),
+        )
+        .unwrap();
+        let words = body["words"].as_array().expect("words should be an array");
+        assert_eq!(words.len(), 2048);
     }
 }
