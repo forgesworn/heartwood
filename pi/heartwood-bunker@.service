@@ -1,0 +1,39 @@
+[Unit]
+Description=Heartwood NIP-46 bunker (%i)
+After=network-online.target heartwood@%i.service
+Wants=network-online.target
+Requires=heartwood@%i.service
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+[Service]
+Type=simple
+User=heartwood
+Group=heartwood
+WorkingDirectory=/opt/heartwood/bunker
+ExecStart=/usr/bin/node index.mjs
+Restart=always
+RestartSec=15
+Environment=NODE_ENV=production
+Environment=HEARTWOOD_DATA_DIR=/var/lib/heartwood/%i
+
+# Security hardening
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/heartwood/%i
+ReadOnlyPaths=/opt/heartwood
+NoNewPrivileges=true
+PrivateTmp=true
+CapabilityBoundingSet=
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+
+[Install]
+WantedBy=multi-user.target

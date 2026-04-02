@@ -1,0 +1,39 @@
+[Unit]
+Description=Heartwood signing appliance (%i)
+After=network-online.target
+Wants=network-online.target
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+[Service]
+Type=simple
+User=heartwood
+Group=heartwood
+ExecStart=/usr/local/bin/heartwood
+Restart=always
+RestartSec=10
+Environment=RUST_LOG=info
+Environment=HEARTWOOD_DATA_DIR=/var/lib/heartwood/%i
+
+# Security hardening
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/heartwood/%i
+NoNewPrivileges=true
+PrivateTmp=true
+CapabilityBoundingSet=
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+DevicePolicy=closed
+DeviceAllow=/dev/i2c-1 rw
+
+[Install]
+WantedBy=multi-user.target
