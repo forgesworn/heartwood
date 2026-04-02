@@ -13,10 +13,14 @@ async fn main() {
     tracing_subscriber::fmt::init();
     info!("Heartwood starting...");
 
+    let data_dir = std::env::var("HEARTWOOD_DATA_DIR")
+        .unwrap_or_else(|_| "/var/lib/heartwood".to_string());
+    let data_path = std::path::PathBuf::from(&data_dir);
+    info!("Data directory: {}", data_dir);
+
     let oled = oled::Oled::new();
-    let storage = storage::Storage::new(None);
-    let audit_log =
-        audit::AuditLog::with_persistence(std::path::PathBuf::from("/var/lib/heartwood/audit.log"));
+    let storage = storage::Storage::new(Some(data_path.clone()));
+    let audit_log = audit::AuditLog::with_persistence(data_path.join("audit.log"));
 
     oled.show_text("HEARTWOOD");
 
@@ -33,6 +37,7 @@ async fn main() {
         storage: Mutex::new(storage),
         decrypted_payload: Mutex::new(None),
         unlock_throttle: Mutex::new(web::UnlockThrottle::new()),
+        data_dir: data_path,
     });
     let app = web::create_router(state);
 

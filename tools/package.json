@@ -1,0 +1,10 @@
+{
+  "name": "heartwood-tools",
+  "version": "0.1.0",
+  "description": "Heartwood CLI utilities",
+  "type": "module",
+  "dependencies": {
+    "nostr-tools": "^2.23.0",
+    "nsec-tree": "^1.4.2"
+  }
+}

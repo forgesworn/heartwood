@@ -110,6 +110,42 @@ export function tryAutoApprove(clientPk, authorizedKeys, approvedClients) {
   return true
 }
 
+const DEFAULT_DATA_DIR = '/var/lib/heartwood'
+
+/**
+ * Resolve the data directory from environment variables.
+ * @param {Record<string, string>} env - process.env or equivalent
+ * @returns {string}
+ */
+export function resolveDataDir(env) {
+  const dir = env.HEARTWOOD_DATA_DIR
+  if (!dir) return DEFAULT_DATA_DIR
+  return dir.endsWith('/') ? dir.slice(0, -1) : dir
+}
+
+/**
+ * Parse authorized keys from the HEARTWOOD_AUTHORIZED_KEYS env var.
+ * Same format as --authorized-keys CLI flag (comma-separated hex pubkeys).
+ * @param {Record<string, string>} env - process.env or equivalent
+ * @returns {{ keys: Set<string>, warnings: string[] }}
+ */
+export function parseAuthorizedKeysEnv(env) {
+  const raw = env.HEARTWOOD_AUTHORIZED_KEYS
+  if (!raw) return { keys: new Set(), warnings: [] }
+
+  const keys = new Set()
+  const warnings = []
+  for (const k of raw.split(',')) {
+    const hex = k.trim()
+    if (/^[0-9a-f]{64}$/.test(hex)) {
+      keys.add(hex)
+    } else if (hex.length > 0) {
+      warnings.push(hex)
+    }
+  }
+  return { keys, warnings }
+}
+
 /**
  * Check rate limit for a client (sliding window).
  * Mutates rateBuckets in place.

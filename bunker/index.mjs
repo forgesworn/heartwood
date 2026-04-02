@@ -20,19 +20,28 @@ import { derivePersona } from 'nsec-tree/persona'
 import { bytesToHex } from 'nostr-tools/utils'
 import {
   parseAuthorizedKeys,
+  parseAuthorizedKeysEnv,
   isApproved,
   isKindAllowed,
   isValidHexPubkey,
   recordPending,
   tryAutoApprove,
   checkRateLimit,
+  resolveDataDir,
 } from './lib.mjs'
 
 globalThis.WebSocket = WebSocket
 
-// --- 0. Parse CLI flags ---
+// --- 0. Parse CLI flags and env vars ---
 
-const { keys: authorizedKeys, warnings: akWarnings } = parseAuthorizedKeys(process.argv)
+const { keys: cliKeys, warnings: cliWarnings } = parseAuthorizedKeys(process.argv)
+const { keys: envKeys, warnings: envWarnings } = parseAuthorizedKeysEnv(process.env)
+
+// CLI keys take precedence: if --authorized-keys is provided, use only those.
+// Otherwise fall back to HEARTWOOD_AUTHORIZED_KEYS env var.
+const authorizedKeys = cliKeys.size > 0 ? cliKeys : envKeys
+const akWarnings = cliKeys.size > 0 ? cliWarnings : envWarnings
+
 for (const w of akWarnings) {
   console.warn(`WARN: ignoring invalid authorized key: ${w}`)
 }
@@ -40,7 +49,7 @@ if (authorizedKeys.size > 0) {
   console.log(`Authorized keys: ${authorizedKeys.size} client(s) will be auto-approved`)
 }
 
-const DATA_DIR = '/var/lib/heartwood'
+const DATA_DIR = resolveDataDir(process.env)
 const DEFAULT_RELAYS = [
   'wss://relay.damus.io',
   'wss://relay.nostr.band',

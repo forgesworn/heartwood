@@ -1,8 +1,7 @@
 [Unit]
-Description=Heartwood NIP-46 bunker
-After=network-online.target heartwood.service
+Description=Heartwood signing appliance (%i)
+After=network-online.target
 Wants=network-online.target
-Requires=heartwood.service
 StartLimitBurst=5
 StartLimitIntervalSec=60
 
@@ -10,26 +9,22 @@ StartLimitIntervalSec=60
 Type=simple
 User=heartwood
 Group=heartwood
-WorkingDirectory=/opt/heartwood/bunker
-ExecStart=/usr/bin/node index.mjs
+ExecStart=/usr/local/bin/heartwood
 Restart=always
-RestartSec=15
-Environment=NODE_ENV=production
+RestartSec=10
+Environment=RUST_LOG=info
+Environment=HEARTWOOD_DATA_DIR=/var/lib/heartwood/%i
 
 # Security hardening
 ProtectSystem=strict
 ProtectHome=true
-# Note: MemoryDenyWriteExecute is intentionally omitted — Node.js (V8 JIT)
-# requires write-execute memory pages. The Rust binary unit includes it.
-ReadWritePaths=/var/lib/heartwood
-ReadOnlyPaths=/opt/heartwood
+ReadWritePaths=/var/lib/heartwood/%i
 NoNewPrivileges=true
 PrivateTmp=true
-
-# Capability and syscall restrictions
 CapabilityBoundingSet=
 SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM
+MemoryDenyWriteExecute=true
 RestrictRealtime=true
 RestrictSUIDSGID=true
 LockPersonality=true
@@ -38,8 +33,7 @@ ProtectKernelModules=true
 ProtectControlGroups=true
 RestrictNamespaces=true
 DevicePolicy=closed
-MemoryMax=256M
-TasksMax=32
+DeviceAllow=/dev/i2c-1 rw
 
 [Install]
 WantedBy=multi-user.target
