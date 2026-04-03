@@ -309,6 +309,18 @@
 
         <div id="msg" class="hidden"></div>
 
+        <!-- HSM SECURITY (PIN management — HSM mode only) -->
+        <div id="hsm-security-section" class="relay-section hidden">
+            <h2>Security</h2>
+            <p style="font-size:0.8rem; opacity:0.45; margin-bottom:0.75rem;">Set or clear the boot PIN on the connected ESP32. The device must be connected over serial. You will need to press the physical button on the ESP32 to confirm the change (up to 30 seconds).</p>
+            <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
+                <input type="password" id="hsm-pin-input" placeholder="4–8 digits" maxlength="8" inputmode="numeric" pattern="[0-9]*" autocomplete="off" style="width:9rem; padding:0.5rem; background:#111; border:1px solid #333; border-radius:4px; color:#e0e0e0; font-family:monospace; font-size:1rem; letter-spacing:0.3rem; text-align:center;">
+                <button class="btn-sm btn-save" onclick="setHsmPin()">Set PIN</button>
+                <button class="btn-sm" style="background:transparent; border:1px solid #5a2020; color:#b44;" onclick="clearHsmPin()">Clear PIN</button>
+            </div>
+            <div id="hsm-pin-msg" class="hidden" style="margin-top:0.5rem;"></div>
+        </div>
+
         <!-- RELAY CONFIG (always visible once loaded) -->
         <div id="relay-section" class="relay-section hidden">
             <h2>Relays <span id="relay-status-summary" class="hidden" style="font-size:0.75rem; font-weight:normal; opacity:0.6;"></span></h2>
@@ -1197,6 +1209,66 @@
             }
         }
 
+        // --- HSM PIN management ---
+
+        async function setHsmPin() {
+            const pin = document.getElementById('hsm-pin-input').value;
+            const msgEl = document.getElementById('hsm-pin-msg');
+            if (!pin || pin.length < 4 || pin.length > 8 || !/^\d+$/.test(pin)) {
+                msgEl.textContent = 'PIN must be 4\u20138 digits';
+                msgEl.className = 'msg msg-err';
+                return;
+            }
+            msgEl.textContent = 'Waiting for button press on ESP32\u2026';
+            msgEl.className = 'msg msg-ok';
+            try {
+                const res = await fetch('/api/hsm/pin', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'set', pin }),
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    msgEl.textContent = 'Boot PIN set successfully';
+                    msgEl.className = 'msg msg-ok';
+                    document.getElementById('hsm-pin-input').value = '';
+                    setTimeout(() => msgEl.className = 'hidden', 4000);
+                } else {
+                    msgEl.textContent = data.error || 'Failed to set PIN';
+                    msgEl.className = 'msg msg-err';
+                }
+            } catch (e) {
+                msgEl.textContent = 'Connection failed: ' + e.message;
+                msgEl.className = 'msg msg-err';
+            }
+        }
+
+        async function clearHsmPin() {
+            if (!confirm('Remove the boot PIN from the ESP32? The device will no longer require a PIN on startup.')) return;
+            const msgEl = document.getElementById('hsm-pin-msg');
+            msgEl.textContent = 'Waiting for button press on ESP32\u2026';
+            msgEl.className = 'msg msg-ok';
+            try {
+                const res = await fetch('/api/hsm/pin', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'clear' }),
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    msgEl.textContent = 'Boot PIN cleared';
+                    msgEl.className = 'msg msg-ok';
+                    setTimeout(() => msgEl.className = 'hidden', 4000);
+                } else {
+                    msgEl.textContent = data.error || 'Failed to clear PIN';
+                    msgEl.className = 'msg msg-err';
+                }
+            } catch (e) {
+                msgEl.textContent = 'Connection failed: ' + e.message;
+                msgEl.className = 'msg msg-err';
+            }
+        }
+
         // --- Load initial state ---
 
         fetch('/api/status')
@@ -1236,6 +1308,9 @@
                     document.getElementById('password-section').classList.remove('hidden');
                     if (d.has_password) {
                         document.getElementById('pw-hint').textContent = 'Password is set. Enter a new one to change it.';
+                    }
+                    if (d.mode === 'hsm') {
+                        document.getElementById('hsm-security-section').classList.remove('hidden');
                     }
                     loadClients();
                     // Start polling relay connection status

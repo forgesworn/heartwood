@@ -1668,6 +1668,193 @@ async fn api_pair(
     )
 }
 
+/// Frame type bytes for the ESP32 serial protocol.
+const FRAME_MAGIC: [u8; 2] = [0x48, 0x57];
+const FRAME_TYPE_SET_PIN: u8 = 0x25;
+const FRAME_TYPE_ACK: u8 = 0x06;
+const FRAME_TYPE_NACK: u8 = 0x15;
+
+/// Build a framed serial message: `[magic_2][type_1][length_u16_be][payload…][crc32_4]`.
+fn build_frame(frame_type: u8, payload: &[u8]) -> Vec<u8> {
+    let mut frame = Vec::with_capacity(2 + 1 + 2 + payload.len() + 4);
+    frame.extend_from_slice(&FRAME_MAGIC);
+    frame.push(frame_type);
+    let len = payload.len() as u16;
+    frame.extend_from_slice(&len.to_be_bytes());
+    frame.extend_from_slice(payload);
+    let checksum = crc32fast::hash(&frame);
+    frame.extend_from_slice(&checksum.to_be_bytes());
+    frame
+}
+
+/// Read one complete frame from the serial port (blocking, up to `timeout`).
+///
+/// Returns `(frame_type, payload)` or an error string.
+fn read_frame(
+    port: &mut dyn serialport::SerialPort,
+    timeout: std::time::Duration,
+) -> Result<(u8, Vec<u8>), String> {
+    let deadline = std::time::Instant::now() + timeout;
+    let mut buf = Vec::with_capacity(64);
+
+    // Read bytes until we have a valid frame or time out.
+    loop {
+        if std::time::Instant::now() >= deadline {
+            return Err("timed out waiting for response from ESP32".to_string());
+        }
+
+        let mut byte = [0u8; 1];
+        match std::io::Read::read(port, &mut byte) {
+            Ok(1) => buf.push(byte[0]),
+            Ok(_) => continue,
+            Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => continue,
+            Err(e) => return Err(format!("serial read error: {e}")),
+        }
+
+        // Need at least magic(2) + type(1) + len(2) + crc(4) = 9 bytes
+        if buf.len() < 9 {
+            continue;
+        }
+
+        // Scan for magic bytes
+        if buf[0] != FRAME_MAGIC[0] || buf[1] != FRAME_MAGIC[1] {
+            buf.drain(0..1);
+            continue;
+        }
+
+        let frame_type = buf[2];
+        let payload_len = u16::from_be_bytes([buf[3], buf[4]]) as usize;
+        let total = 2 + 1 + 2 + payload_len + 4;
+
+        if buf.len() < total {
+            continue;
+        }
+
+        // Verify CRC over everything except the trailing 4-byte CRC itself
+        let expected_crc = u32::from_be_bytes([
+            buf[total - 4],
+            buf[total - 3],
+            buf[total - 2],
+            buf[total - 1],
+        ]);
+        let actual_crc = crc32fast::hash(&buf[..total - 4]);
+        if actual_crc != expected_crc {
+            return Err("CRC mismatch in ESP32 response".to_string());
+        }
+
+        let payload = buf[7..total - 4].to_vec();
+        return Ok((frame_type, payload));
+    }
+}
+
+#[derive(Deserialize)]
+struct HsmPinRequest {
+    /// `"set"` with a 4–8 digit `pin`, or `"clear"` to remove the PIN.
+    action: String,
+    pin: Option<String>,
+}
+
+/// `POST /api/hsm/pin` — set or clear the ESP32 boot PIN.
+///
+/// Sends a `SET_PIN` frame (0x25) to the ESP32 over the configured serial port.
+/// The device requires physical button approval; this endpoint blocks for up to
+/// 35 seconds while awaiting the ACK/NACK response.
+///
+/// Only available in HSM mode. Returns `{"ok": true}` on success.
+async fn api_hsm_pin(
+    State(state): State<Arc<AppState>>,
+    axum::Json(req): axum::Json<HsmPinRequest>,
+) -> impl IntoResponse {
+    // Must be unlocked and in HSM mode
+    let payload_guard = state.decrypted_payload.lock().await;
+    let raw = match payload_guard.as_ref() {
+        Some(p) => p.as_str().to_string(),
+        None => return (StatusCode::LOCKED, axum::Json(json!({"error": "device is locked"}))),
+    };
+    drop(payload_guard);
+
+    let serial_port_path = match raw.strip_prefix("hsm:") {
+        Some(p) => p.to_string(),
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                axum::Json(json!({"error": "PIN management is only available in HSM mode"})),
+            )
+        }
+    };
+
+    // Build the payload: ASCII digits for set, empty for clear
+    let pin_payload: Vec<u8> = match req.action.as_str() {
+        "set" => {
+            let pin = match &req.pin {
+                Some(p) => p.as_str(),
+                None => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        axum::Json(json!({"error": "'pin' is required for action 'set'"})),
+                    )
+                }
+            };
+            if pin.len() < 4 || pin.len() > 8 || !pin.chars().all(|c| c.is_ascii_digit()) {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    axum::Json(json!({"error": "PIN must be 4–8 ASCII digits"})),
+                );
+            }
+            pin.as_bytes().to_vec()
+        }
+        "clear" => Vec::new(),
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                axum::Json(json!({"error": "action must be 'set' or 'clear'"})),
+            )
+        }
+    };
+
+    // Open the serial port and send the frame — blocking I/O on a thread pool thread
+    let result = tokio::task::spawn_blocking(move || -> Result<(), String> {
+        let mut port = serialport::new(&serial_port_path, 115_200)
+            .timeout(std::time::Duration::from_millis(500))
+            .open()
+            .map_err(|e| format!("failed to open serial port {serial_port_path}: {e}"))?;
+
+        let frame = build_frame(FRAME_TYPE_SET_PIN, &pin_payload);
+        std::io::Write::write_all(&mut *port, &frame)
+            .map_err(|e| format!("failed to write to serial port: {e}"))?;
+
+        // Wait for ACK/NACK — the user has up to 30 seconds to press the button
+        let (frame_type, _) =
+            read_frame(&mut *port, std::time::Duration::from_secs(35))?;
+
+        match frame_type {
+            FRAME_TYPE_ACK => Ok(()),
+            FRAME_TYPE_NACK => Err("ESP32 rejected the PIN change (button not pressed or PIN invalid)".to_string()),
+            other => Err(format!("unexpected response frame type: 0x{other:02x}")),
+        }
+    })
+    .await;
+
+    match result {
+        Ok(Ok(())) => {
+            let action = &req.action;
+            info!("ESP32 boot PIN {action}");
+            (StatusCode::OK, axum::Json(json!({"ok": true})))
+        }
+        Ok(Err(e)) => {
+            tracing::warn!("HSM PIN operation failed: {e}");
+            (StatusCode::BAD_GATEWAY, axum::Json(json!({"error": e})))
+        }
+        Err(e) => {
+            tracing::error!("HSM PIN task panicked: {e}");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(json!({"error": "internal error during PIN operation"})),
+            )
+        }
+    }
+}
+
 /// Build and return the application router.
 ///
 /// No CORS layer is applied — the web UI uses same-origin requests.
@@ -1697,6 +1884,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/wordlist", get(api_wordlist))
         .route("/api/client-keys", get(api_list_client_keys))
         .route("/api/derive-client-key", post(api_derive_client_key))
+        .route("/api/hsm/pin", post(api_hsm_pin))
         .layer(middleware::from_fn_with_state(state.clone(), lock_middleware))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
         .layer(DefaultBodyLimit::max(65536))
