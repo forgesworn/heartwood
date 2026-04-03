@@ -1851,6 +1851,32 @@ async fn api_hsm_pin(
     }
 }
 
+/// `GET /api/hsm/detect` — scan for ESP32 serial devices.
+///
+/// Returns a JSON array of detected serial ports that look like Espressif
+/// devices (vendor ID 0x303a). Used by the setup UI to auto-populate the
+/// serial port field.
+async fn api_hsm_detect() -> impl IntoResponse {
+    let ports = serialport::available_ports().unwrap_or_default();
+    let espressif: Vec<serde_json::Value> = ports
+        .iter()
+        .filter_map(|p| {
+            if let serialport::SerialPortType::UsbPort(usb) = &p.port_type {
+                // Espressif vendor ID is 0x303a
+                if usb.vid == 0x303a {
+                    return Some(json!({
+                        "port": p.port_name,
+                        "product": usb.product.as_deref().unwrap_or("ESP32"),
+                        "serial": usb.serial_number.as_deref().unwrap_or(""),
+                    }));
+                }
+            }
+            None
+        })
+        .collect();
+    (StatusCode::OK, axum::Json(json!(espressif)))
+}
+
 /// Build and return the application router.
 ///
 /// No CORS layer is applied — the web UI uses same-origin requests.
@@ -1881,6 +1907,7 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/client-keys", get(api_list_client_keys))
         .route("/api/derive-client-key", post(api_derive_client_key))
         .route("/api/hsm/pin", post(api_hsm_pin))
+        .route("/api/hsm/detect", get(api_hsm_detect))
         .layer(middleware::from_fn_with_state(state.clone(), lock_middleware))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
         .layer(DefaultBodyLimit::max(65536))

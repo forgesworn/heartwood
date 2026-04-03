@@ -257,9 +257,12 @@
             <div id="fields-hsm" class="fields hidden">
                 <div class="field">
                     <label>Serial port path</label>
-                    <input type="text" id="hsm-serial-port" placeholder="/dev/ttyUSB0" autocomplete="off" spellcheck="false" style="width:100%; padding:0.65rem; background:#111; border:1px solid #333; border-radius:6px; color:#e0e0e0; font-family:monospace; font-size:0.9rem;">
+                    <div style="display:flex; gap:0.5rem; align-items:center;">
+                        <input type="text" id="hsm-serial-port" placeholder="/dev/ttyACM0" autocomplete="off" spellcheck="false" style="flex:1; padding:0.65rem; background:#111; border:1px solid #333; border-radius:6px; color:#e0e0e0; font-family:monospace; font-size:0.9rem;">
+                        <button type="button" onclick="detectEsp32()" style="padding:0.65rem 1rem; background:#2a2a2a; border:1px solid #444; border-radius:6px; color:#e0e0e0; cursor:pointer; white-space:nowrap; font-size:0.85rem;">Detect</button>
+                    </div>
+                    <p id="hsm-detect-msg" style="font-size:0.78rem; opacity:0.6; margin-top:0.25rem;"></p>
                 </div>
-                <p style="font-size:0.78rem; opacity:0.45; margin-top:0.25rem;">The ESP32 must be connected to this port before starting the bridge binary. Common paths: <code>/dev/ttyUSB0</code>, <code>/dev/ttyACM0</code>.</p>
             </div>
 
             <!-- PIN for encryption at rest -->
@@ -452,6 +455,26 @@
             });
 
             return { focus: () => input.focus(), reset: () => { input.value = ''; suggestions.classList.remove('visible'); } };
+        }
+
+        async function detectEsp32() {
+            const msg = document.getElementById('hsm-detect-msg');
+            msg.textContent = 'Scanning...';
+            try {
+                const r = await fetch('/api/hsm/detect');
+                const devices = await r.json();
+                if (devices.length === 0) {
+                    msg.textContent = 'No ESP32 devices found. Check the USB connection.';
+                } else if (devices.length === 1) {
+                    document.getElementById('hsm-serial-port').value = devices[0].port;
+                    msg.textContent = 'Found: ' + devices[0].product + ' at ' + devices[0].port;
+                } else {
+                    document.getElementById('hsm-serial-port').value = devices[0].port;
+                    msg.textContent = 'Found ' + devices.length + ' devices. Using ' + devices[0].port;
+                }
+            } catch (e) {
+                msg.textContent = 'Detection failed: ' + e.message;
+            }
         }
 
         function selectMode(mode) {
