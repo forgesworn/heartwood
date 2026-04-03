@@ -168,18 +168,10 @@ impl HeartwoodServer {
         match request {
             Nip46Request::GetPublicKey => self.handle_get_public_key(request_id),
             Nip46Request::SignEvent(params) => self.handle_sign_event(request_id, params),
-            Nip46Request::Nip44Encrypt(_) => {
-                Nip46Response::err(request_id, "nip44_encrypt: not yet implemented")
-            }
-            Nip46Request::Nip44Decrypt(_) => {
-                Nip46Response::err(request_id, "nip44_decrypt: not yet implemented")
-            }
-            Nip46Request::Nip04Encrypt(_) => {
-                Nip46Response::err(request_id, "nip04_encrypt: not yet implemented")
-            }
-            Nip46Request::Nip04Decrypt(_) => {
-                Nip46Response::err(request_id, "nip04_decrypt: not yet implemented")
-            }
+            Nip46Request::Nip44Encrypt(params) => self.handle_nip44_encrypt(request_id, params),
+            Nip46Request::Nip44Decrypt(params) => self.handle_nip44_decrypt(request_id, params),
+            Nip46Request::Nip04Encrypt(params) => self.handle_nip04_encrypt(request_id, params),
+            Nip46Request::Nip04Decrypt(params) => self.handle_nip04_decrypt(request_id, params),
             Nip46Request::HeartwoodDerive(params) => self.handle_derive(request_id, params),
             Nip46Request::HeartwoodDerivePersona(params) => {
                 self.handle_derive_persona(request_id, params)
@@ -252,6 +244,119 @@ impl HeartwoodServer {
             Err(e) => Nip46Response::err(request_id, format!("sign_event: {e}")),
         }
     }
+
+    // ── Encryption helpers ────────────────────────────────────────────────────
+
+    /// Resolve the private key for encryption operations.
+    ///
+    /// Returns the active derived identity's private key, or an error string
+    /// when no derived identity has been selected.  The master root secret is
+    /// intentionally never exposed outside `heartwood-core`, so encryption must
+    /// also operate on a derived key — call `heartwood_switch` first.
+    fn resolve_encryption_key(&self) -> Result<&[u8; 32], &'static str> {
+        match self.active {
+            Some(idx) => Ok(&self.derived[idx].identity.private_key),
+            None => Err("no active identity; call heartwood_switch first"),
+        }
+    }
+
+    /// NIP-44 v2 encrypt.
+    ///
+    /// Params: `[peer_pubkey_hex: string, plaintext: string]`
+    /// Returns the base64-encoded ciphertext blob.
+    fn handle_nip44_encrypt(
+        &self,
+        request_id: &str,
+        params: Vec<serde_json::Value>,
+    ) -> Nip46Response {
+        let peer_pubkey = match params.first().and_then(|v| v.as_str()) {
+            Some(s) => s.to_string(),
+            None => return Nip46Response::err(request_id, "nip44_encrypt: missing peer pubkey"),
+        };
+        let plaintext = match params.get(1).and_then(|v| v.as_str()) {
+            Some(s) => s.to_string(),
+            None => return Nip46Response::err(request_id, "nip44_encrypt: missing plaintext"),
+        };
+
+        match crate::encrypt::nip44_encrypt(self.resolve_encryption_key(), &peer_pubkey, &plaintext) {
+            Ok(ct) => Nip46Response::ok(request_id, json!(ct)),
+            Err(e) => Nip46Response::err(request_id, format!("nip44_encrypt: {e}")),
+        }
+    }
+
+    /// NIP-44 v2 decrypt.
+    ///
+    /// Params: `[peer_pubkey_hex: string, ciphertext: string]`
+    /// Returns the plaintext string.
+    fn handle_nip44_decrypt(
+        &self,
+        request_id: &str,
+        params: Vec<serde_json::Value>,
+    ) -> Nip46Response {
+        let peer_pubkey = match params.first().and_then(|v| v.as_str()) {
+            Some(s) => s.to_string(),
+            None => return Nip46Response::err(request_id, "nip44_decrypt: missing peer pubkey"),
+        };
+        let ciphertext = match params.get(1).and_then(|v| v.as_str()) {
+            Some(s) => s.to_string(),
+            None => return Nip46Response::err(request_id, "nip44_decrypt: missing ciphertext"),
+        };
+
+        match crate::encrypt::nip44_decrypt(self.resolve_encryption_key(), &peer_pubkey, &ciphertext) {
+            Ok(pt) => Nip46Response::ok(request_id, json!(pt)),
+            Err(e) => Nip46Response::err(request_id, format!("nip44_decrypt: {e}")),
+        }
+    }
+
+    /// NIP-04 (deprecated) encrypt.
+    ///
+    /// Params: `[peer_pubkey_hex: string, plaintext: string]`
+    /// Returns `base64(ciphertext)?iv=base64(iv)`.
+    fn handle_nip04_encrypt(
+        &self,
+        request_id: &str,
+        params: Vec<serde_json::Value>,
+    ) -> Nip46Response {
+        let peer_pubkey = match params.first().and_then(|v| v.as_str()) {
+            Some(s) => s.to_string(),
+            None => return Nip46Response::err(request_id, "nip04_encrypt: missing peer pubkey"),
+        };
+        let plaintext = match params.get(1).and_then(|v| v.as_str()) {
+            Some(s) => s.to_string(),
+            None => return Nip46Response::err(request_id, "nip04_encrypt: missing plaintext"),
+        };
+
+        match crate::encrypt::nip04_encrypt(self.resolve_encryption_key(), &peer_pubkey, &plaintext) {
+            Ok(ct) => Nip46Response::ok(request_id, json!(ct)),
+            Err(e) => Nip46Response::err(request_id, format!("nip04_encrypt: {e}")),
+        }
+    }
+
+    /// NIP-04 (deprecated) decrypt.
+    ///
+    /// Params: `[peer_pubkey_hex: string, ciphertext: string]`
+    /// Expects the `ciphertext?iv=iv` wire format.
+    fn handle_nip04_decrypt(
+        &self,
+        request_id: &str,
+        params: Vec<serde_json::Value>,
+    ) -> Nip46Response {
+        let peer_pubkey = match params.first().and_then(|v| v.as_str()) {
+            Some(s) => s.to_string(),
+            None => return Nip46Response::err(request_id, "nip04_decrypt: missing peer pubkey"),
+        };
+        let ciphertext = match params.get(1).and_then(|v| v.as_str()) {
+            Some(s) => s.to_string(),
+            None => return Nip46Response::err(request_id, "nip04_decrypt: missing ciphertext"),
+        };
+
+        match crate::encrypt::nip04_decrypt(self.resolve_encryption_key(), &peer_pubkey, &ciphertext) {
+            Ok(pt) => Nip46Response::ok(request_id, json!(pt)),
+            Err(e) => Nip46Response::err(request_id, format!("nip04_decrypt: {e}")),
+        }
+    }
+
+    // ── Derivation ────────────────────────────────────────────────────────────
 
     /// Derive a new child identity at a given purpose and index.
     ///
