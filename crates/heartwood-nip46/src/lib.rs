@@ -1,3 +1,4 @@
+pub mod encrypt;
 pub mod methods;
 pub mod permissions;
 pub mod server;

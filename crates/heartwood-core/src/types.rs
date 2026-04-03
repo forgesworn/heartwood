@@ -53,7 +53,10 @@ impl TreeRoot {
         Self { secret, master_pubkey }
     }
 
-    pub(crate) fn secret(&self) -> &[u8; 32] {
+    /// Raw secret bytes. Used internally and by heartwood-nip46 for ECDH
+    /// operations (NIP-44/NIP-04 encryption). Must never be logged, serialised,
+    /// or returned to untrusted clients.
+    pub fn secret(&self) -> &[u8; 32] {
         &self.secret
     }
 

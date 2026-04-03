@@ -366,55 +366,99 @@ fn verify_proof_validates_created_proof() {
 }
 
 // ---------------------------------------------------------------------------
-// 12. nip44/nip04 return "not yet implemented"
+// 12. nip44/nip04 — require active identity, then work correctly
 // ---------------------------------------------------------------------------
+
+// Peer pubkey used in encrypt/decrypt handler tests (x-coord of 2*G on secp256k1).
+const PEER_PUBKEY: &str = "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
+
+/// Helper: build a server with an active derived identity ready for signing/encryption.
+fn server_with_active_identity() -> HeartwoodServer {
+    let mut server = test_server_with_perms();
+    server.handle_request("setup-derive", CLIENT, req(r#"{"method":"heartwood_derive","params":["messaging",0]}"#));
+    server.handle_request("setup-switch", CLIENT, req(r#"{"method":"heartwood_switch","params":["messaging",0]}"#));
+    server
+}
+
 #[test]
-fn nip44_encrypt_returns_not_implemented() {
+fn nip44_encrypt_requires_active_identity() {
+    // No identity switched in — must return an error mentioning the requirement.
     let mut server = test_server();
     let resp = server.handle_request(
         "req-12a",
         CLIENT,
-        req(r#"{"method":"nip44_encrypt","params":["pubkey","plaintext"]}"#),
+        req(&format!(r#"{{"method":"nip44_encrypt","params":["{PEER_PUBKEY}","hello"]}}"#)),
     );
     assert!(resp.result().is_none());
     let err = resp.error().unwrap();
-    assert!(err.contains("not yet implemented"), "expected 'not yet implemented', got: {err}");
+    assert!(err.contains("no active identity"), "expected 'no active identity', got: {err}");
 }
 
 #[test]
-fn nip44_decrypt_returns_not_implemented() {
+fn nip44_decrypt_requires_active_identity() {
     let mut server = test_server();
     let resp = server.handle_request(
         "req-12b",
         CLIENT,
-        req(r#"{"method":"nip44_decrypt","params":["pubkey","ciphertext"]}"#),
+        req(&format!(r#"{{"method":"nip44_decrypt","params":["{PEER_PUBKEY}","ciphertext"]}}"#)),
     );
     assert!(resp.result().is_none());
-    assert!(resp.error().unwrap().contains("not yet implemented"));
+    let err = resp.error().unwrap();
+    assert!(err.contains("no active identity"), "expected 'no active identity', got: {err}");
 }
 
 #[test]
-fn nip04_encrypt_returns_not_implemented() {
+fn nip04_encrypt_requires_active_identity() {
     let mut server = test_server();
     let resp = server.handle_request(
         "req-12c",
         CLIENT,
-        req(r#"{"method":"nip04_encrypt","params":["pubkey","plaintext"]}"#),
+        req(&format!(r#"{{"method":"nip04_encrypt","params":["{PEER_PUBKEY}","hello"]}}"#)),
     );
     assert!(resp.result().is_none());
-    assert!(resp.error().unwrap().contains("not yet implemented"));
+    let err = resp.error().unwrap();
+    assert!(err.contains("no active identity"), "expected 'no active identity', got: {err}");
 }
 
 #[test]
-fn nip04_decrypt_returns_not_implemented() {
+fn nip04_decrypt_requires_active_identity() {
     let mut server = test_server();
     let resp = server.handle_request(
         "req-12d",
         CLIENT,
-        req(r#"{"method":"nip04_decrypt","params":["pubkey","ciphertext"]}"#),
+        req(&format!(r#"{{"method":"nip04_decrypt","params":["{PEER_PUBKEY}","ct?iv=aaa"]}}"#)),
     );
     assert!(resp.result().is_none());
-    assert!(resp.error().unwrap().contains("not yet implemented"));
+    let err = resp.error().unwrap();
+    assert!(err.contains("no active identity"), "expected 'no active identity', got: {err}");
+}
+
+#[test]
+fn nip44_encrypt_produces_base64_ciphertext() {
+    let mut server = server_with_active_identity();
+    let resp = server.handle_request(
+        "req-12e",
+        CLIENT,
+        req(&format!(r#"{{"method":"nip44_encrypt","params":["{PEER_PUBKEY}","hello nip44"]}}"#)),
+    );
+    assert!(resp.error().is_none(), "unexpected error: {:?}", resp.error());
+    let ct = resp.result().and_then(|v| v.as_str()).unwrap();
+    // NIP-44 output is base64 — must not be empty and must not look like NIP-04.
+    assert!(!ct.is_empty());
+    assert!(!ct.contains("?iv="), "NIP-44 output must not contain ?iv= (that is NIP-04 format)");
+}
+
+#[test]
+fn nip04_encrypt_produces_iv_format() {
+    let mut server = server_with_active_identity();
+    let resp = server.handle_request(
+        "req-12f",
+        CLIENT,
+        req(&format!(r#"{{"method":"nip04_encrypt","params":["{PEER_PUBKEY}","hello nip04"]}}"#)),
+    );
+    assert!(resp.error().is_none(), "unexpected error: {:?}", resp.error());
+    let ct = resp.result().and_then(|v| v.as_str()).unwrap();
+    assert!(ct.contains("?iv="), "NIP-04 output must contain ?iv= separator");
 }
 
 // ---------------------------------------------------------------------------
