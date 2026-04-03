@@ -172,6 +172,10 @@
                     <h3>nsec-tree (from nsec) <span class="badge advanced">advanced</span></h3>
                     <p>Derive a new nsec-tree root via HMAC-SHA256 from an existing nsec. Creates a separate master identity for child derivation. Different npub from the input nsec.</p>
                 </div>
+                <div class="mode-card" data-mode="hsm" onclick="selectMode('hsm')">
+                    <h3>Hardware HSM <span class="badge advanced">advanced</span></h3>
+                    <p>No master secret is stored on the Pi. NIP-46 signing requests are forwarded to an ESP32 hardware security module over serial. The ESP32 holds the key; this device is a proxy only.</p>
+                </div>
             </div>
 
             <!-- Bunker fields -->
@@ -247,6 +251,15 @@
                     <label>Source nsec (nsec1...)</label>
                     <textarea id="tree-nsec" placeholder="nsec1..." autocomplete="off" spellcheck="false"></textarea>
                 </div>
+            </div>
+
+            <!-- HSM fields -->
+            <div id="fields-hsm" class="fields hidden">
+                <div class="field">
+                    <label>Serial port path</label>
+                    <input type="text" id="hsm-serial-port" placeholder="/dev/ttyUSB0" autocomplete="off" spellcheck="false" style="width:100%; padding:0.65rem; background:#111; border:1px solid #333; border-radius:6px; color:#e0e0e0; font-family:monospace; font-size:0.9rem;">
+                </div>
+                <p style="font-size:0.78rem; opacity:0.45; margin-top:0.25rem;">The ESP32 must be connected to this port before starting the bridge binary. Common paths: <code>/dev/ttyUSB0</code>, <code>/dev/ttyACM0</code>.</p>
             </div>
 
             <!-- PIN for encryption at rest -->
@@ -433,7 +446,7 @@
             currentMode = mode;
             document.querySelectorAll('.mode-card').forEach(c =>
                 c.classList.toggle('selected', c.dataset.mode === mode));
-            ['bunker', 'tree-mnemonic', 'tree-nsec'].forEach(m =>
+            ['bunker', 'tree-mnemonic', 'tree-nsec', 'hsm'].forEach(m =>
                 document.getElementById('fields-' + m).classList.toggle('hidden', m !== mode));
         }
 
@@ -639,6 +652,10 @@
                 body.mnemonic = mnemonic;
                 const pass = document.getElementById('tree-passphrase').value;
                 if (pass) body.passphrase = pass;
+            } else if (currentMode === 'hsm') {
+                const serialPort = document.getElementById('hsm-serial-port').value.trim();
+                if (!serialPort) { showMsg('Serial port path is required for HSM mode', false); btn.disabled = false; btn.textContent = 'Initialise'; return; }
+                body.serial_port = serialPort;
             } else {
                 const nsec = document.getElementById('tree-nsec').value.trim();
                 if (!nsec) { btn.disabled = false; btn.textContent = 'Initialise'; return; }
@@ -755,9 +772,10 @@
                 'bunker': 'Bunker mode (NIP-46)',
                 'tree-mnemonic': 'nsec-tree (mnemonic)',
                 'tree-nsec': 'nsec-tree (nsec)',
+                'hsm': 'Hardware HSM (ESP32)',
             };
             document.getElementById('conf-mode').textContent = labels[mode] || mode;
-            document.getElementById('conf-npub').textContent = npub;
+            document.getElementById('conf-npub').textContent = npub || '(provided by ESP32 bridge)';
             document.getElementById('configured').classList.remove('hidden');
         }
 

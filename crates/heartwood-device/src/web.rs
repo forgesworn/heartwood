@@ -102,6 +102,9 @@ async fn serve_index() -> impl IntoResponse {
 }
 
 /// Parse a decrypted payload string into (mode, npub).
+///
+/// For HSM mode the "npub" field is empty — the public key lives on the ESP32
+/// and is not available until the bridge connects.
 fn parse_payload(payload: &str) -> (String, String) {
     if let Some(nsec) = payload.strip_prefix("bunker:") {
         let npub = heartwood_core::npub_from_nsec(nsec).unwrap_or_default();
@@ -127,6 +130,9 @@ fn parse_payload(payload: &str) -> (String, String) {
             })
             .unwrap_or_default();
         ("tree-nsec".to_string(), npub)
+    } else if payload.starts_with("hsm:") {
+        // No master secret on the Pi — pubkey is held by the ESP32.
+        ("hsm".to_string(), String::new())
     } else {
         ("unknown".to_string(), String::new())
     }
@@ -192,7 +198,15 @@ async fn api_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         }));
     }
 
-    let (mode, npub) = parse_payload(payload_guard.as_ref().map(|z| z.as_str()).unwrap_or(""));
+    let raw_payload = payload_guard.as_ref().map(|z| z.as_str()).unwrap_or("");
+    let (mode, npub) = parse_payload(raw_payload);
+
+    // For HSM mode, expose the configured serial port so the bridge binary can read it.
+    let serial_port = if mode == "hsm" {
+        raw_payload.strip_prefix("hsm:").map(|s| s.to_string())
+    } else {
+        None
+    };
 
     // Read bunker URI if available
     let bunker_uri = std::fs::read_to_string(state.data_file("bunker-uri.txt"))
@@ -208,6 +222,7 @@ async fn api_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         "tor_enabled": tor_enabled,
         "mode": mode,
         "npub": npub,
+        "serial_port": serial_port,
         "relays": relays,
         "bunker_uri": bunker_uri,
         "onion_address": read_onion_address(&state.data_dir)
@@ -216,21 +231,25 @@ async fn api_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 
 #[derive(Deserialize)]
 struct SetupRequest {
-    /// "bunker", "tree-mnemonic", or "tree-nsec"
+    /// "bunker", "tree-mnemonic", "tree-nsec", or "hsm"
     mode: String,
     mnemonic: Option<String>,
     passphrase: Option<String>,
     nsec: Option<String>,
+    /// Serial port path for HSM mode, e.g. "/dev/ttyUSB0".
+    serial_port: Option<String>,
     /// 4–8 digit PIN used to encrypt the master secret at rest.
     pin: String,
 }
 
 /// `POST /api/setup` — initialise the device. Only works in setup mode.
 ///
-/// Three modes:
+/// Four modes:
 /// - `bunker`: store nsec as-is for NIP-46 remote signing. Your existing npub is preserved.
 /// - `tree-mnemonic`: derive an nsec-tree root from a BIP-39 mnemonic. New master identity.
 /// - `tree-nsec`: derive an nsec-tree root from an existing nsec via HMAC. New master identity.
+/// - `hsm`: no master secret stored on the Pi. NIP-46 requests are forwarded to an ESP32
+///   hardware security module over a serial port. `serial_port` (e.g. `/dev/ttyUSB0`) is required.
 async fn api_setup(
     State(state): State<Arc<AppState>>,
     axum::Json(req): axum::Json<SetupRequest>,
@@ -316,12 +335,40 @@ async fn api_setup(
                 }
             }
         }
+        "hsm" => {
+            let serial_port = match &req.serial_port {
+                Some(p) => p.trim().to_string(),
+                None => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        axum::Json(
+                            json!({"error": "hsm mode requires 'serial_port' (e.g. '/dev/ttyUSB0')"}),
+                        ),
+                    )
+                }
+            };
+            // Validate the path: must be non-empty and contain only safe characters.
+            // We store it as config only — no I/O to the port happens here.
+            if serial_port.is_empty()
+                || !serial_port.starts_with('/')
+                || serial_port.contains("..")
+                || serial_port.chars().any(|c| c == '\0' || c == '\n' || c == '\r')
+            {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    axum::Json(json!({"error": "serial_port must be an absolute path with no null bytes or path traversal"})),
+                );
+            }
+            // HSM mode stores no cryptographic key material — only the serial port path.
+            // The npub is unknown at setup time; the ESP32 bridge will report it later.
+            (String::new(), format!("hsm:{serial_port}"))
+        }
         _ => {
             return (
                 StatusCode::BAD_REQUEST,
-                axum::Json(
-                    json!({"error": "mode must be 'bunker', 'tree-mnemonic', or 'tree-nsec'"}),
-                ),
+                axum::Json(json!({
+                    "error": "mode must be 'bunker', 'tree-mnemonic', 'tree-nsec', or 'hsm'"
+                })),
             )
         }
     };
@@ -341,7 +388,11 @@ async fn api_setup(
     write_runtime_payload(&state.data_dir, &payload);
     *state.decrypted_payload.lock().await = Some(zeroize::Zeroizing::new(payload));
 
-    info!("Setup complete (mode={}). Pubkey: {npub}", req.mode);
+    if npub.is_empty() {
+        info!("Setup complete (mode={}). Pubkey deferred to ESP32 bridge.", req.mode);
+    } else {
+        info!("Setup complete (mode={}). Pubkey: {npub}", req.mode);
+    }
     (StatusCode::OK, axum::Json(json!({"npub": npub, "mode": req.mode})))
 }
 
@@ -427,6 +478,15 @@ async fn api_derive_client_key(
                 )
             }
         }
+    } else if payload.starts_with("hsm:") {
+        // HSM mode: the master secret lives on the ESP32, not the Pi.
+        // Client key derivation is not available locally.
+        return (
+            StatusCode::BAD_REQUEST,
+            axum::Json(
+                json!({"error": "client key derivation is not available in HSM mode — keys are managed by the ESP32"}),
+            ),
+        );
     } else {
         return (
             StatusCode::BAD_REQUEST,
