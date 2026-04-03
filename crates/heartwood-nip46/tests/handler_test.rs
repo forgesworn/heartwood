@@ -375,8 +375,16 @@ const PEER_PUBKEY: &str = "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac0
 /// Helper: build a server with an active derived identity ready for signing/encryption.
 fn server_with_active_identity() -> HeartwoodServer {
     let mut server = test_server_with_perms();
-    server.handle_request("setup-derive", CLIENT, req(r#"{"method":"heartwood_derive","params":["messaging",0]}"#));
-    server.handle_request("setup-switch", CLIENT, req(r#"{"method":"heartwood_switch","params":["messaging",0]}"#));
+    server.handle_request(
+        "setup-derive",
+        CLIENT,
+        req(r#"{"method":"heartwood_derive","params":["messaging",0]}"#),
+    );
+    server.handle_request(
+        "setup-switch",
+        CLIENT,
+        req(r#"{"method":"heartwood_switch","params":["messaging",0]}"#),
+    );
     server
 }
 

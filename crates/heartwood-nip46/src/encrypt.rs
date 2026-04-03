@@ -20,10 +20,7 @@ use chacha20::cipher::{KeyIvInit as ChaChaKeyIvInit, StreamCipher};
 use chacha20::XChaCha20;
 use hkdf::Hkdf;
 use hmac::{Hmac, Mac};
-use k256::{
-    ecdh::diffie_hellman,
-    PublicKey, SecretKey,
-};
+use k256::{ecdh::diffie_hellman, PublicKey, SecretKey};
 use rand_core::{OsRng, RngCore};
 use sha2::Sha256;
 use zeroize::{Zeroize, Zeroizing};
@@ -35,23 +32,23 @@ use zeroize::{Zeroize, Zeroizing};
 ///
 /// `private_key` is a raw 32-byte scalar.  `peer_pubkey_hex` is either a
 /// 64-char compressed-x-only (Nostr) or 66-char SEC1 hex pubkey.
-fn ecdh_shared_x(private_key: &[u8; 32], peer_pubkey_hex: &str) -> Result<Zeroizing<[u8; 32]>, String> {
-    let secret =
-        SecretKey::from_bytes(private_key.into()).map_err(|e| format!("invalid private key: {e}"))?;
+fn ecdh_shared_x(
+    private_key: &[u8; 32],
+    peer_pubkey_hex: &str,
+) -> Result<Zeroizing<[u8; 32]>, String> {
+    let secret = SecretKey::from_bytes(private_key.into())
+        .map_err(|e| format!("invalid private key: {e}"))?;
 
     // Nostr conventionally uses 64-hex-char x-only pubkeys (32 bytes).
     // Expand to 33-byte compressed SEC1 (02-prefixed) before parsing.
     let peer_pubkey: PublicKey = if peer_pubkey_hex.len() == 64 {
         let prefixed = format!("02{peer_pubkey_hex}");
-        let bytes = hex::decode(&prefixed)
-            .map_err(|e| format!("invalid peer pubkey hex: {e}"))?;
-        PublicKey::from_sec1_bytes(&bytes)
-            .map_err(|e| format!("invalid peer pubkey: {e}"))?
+        let bytes = hex::decode(&prefixed).map_err(|e| format!("invalid peer pubkey hex: {e}"))?;
+        PublicKey::from_sec1_bytes(&bytes).map_err(|e| format!("invalid peer pubkey: {e}"))?
     } else if peer_pubkey_hex.len() == 66 {
-        let bytes = hex::decode(peer_pubkey_hex)
-            .map_err(|e| format!("invalid peer pubkey hex: {e}"))?;
-        PublicKey::from_sec1_bytes(&bytes)
-            .map_err(|e| format!("invalid peer pubkey: {e}"))?
+        let bytes =
+            hex::decode(peer_pubkey_hex).map_err(|e| format!("invalid peer pubkey hex: {e}"))?;
+        PublicKey::from_sec1_bytes(&bytes).map_err(|e| format!("invalid peer pubkey: {e}"))?
     } else {
         return Err(format!(
             "peer pubkey must be 64- or 66-char hex; got {} chars",
@@ -118,7 +115,11 @@ fn nip44_padded_len(n: usize) -> usize {
     let next_power = (n - 1).next_power_of_two();
     let chunk = (next_power / 4).max(NIP44_MIN_PADDED_LEN);
     let remainder = n % chunk;
-    if remainder == 0 { n } else { n + chunk - remainder }
+    if remainder == 0 {
+        n
+    } else {
+        n + chunk - remainder
+    }
 }
 
 /// NIP-44 v2 encrypt.
@@ -127,7 +128,11 @@ fn nip44_padded_len(n: usize) -> usize {
 /// the output of `resolve_encryption_key()` directly.
 ///
 /// Returns the base64-encoded ciphertext blob ready to send over the wire.
-pub fn nip44_encrypt(private_key: Result<&[u8; 32], &'static str>, peer_pubkey_hex: &str, plaintext: &str) -> Result<String, String> {
+pub fn nip44_encrypt(
+    private_key: Result<&[u8; 32], &'static str>,
+    peer_pubkey_hex: &str,
+    plaintext: &str,
+) -> Result<String, String> {
     let private_key = private_key.map_err(|e| e.to_string())?;
     let shared_x = ecdh_shared_x(private_key, peer_pubkey_hex)?;
     let conversation_key = nip44_conversation_key(&shared_x);
@@ -153,8 +158,8 @@ pub fn nip44_encrypt(private_key: Result<&[u8; 32], &'static str>, peer_pubkey_h
     cipher.apply_keystream(&mut padded[..]);
 
     // HMAC-SHA256 of (nonce || ciphertext).
-    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&*hmac_key)
-        .expect("HMAC accepts any key length");
+    let mut mac =
+        <Hmac<Sha256> as Mac>::new_from_slice(&*hmac_key).expect("HMAC accepts any key length");
     mac.update(&nonce);
     mac.update(&padded[..]);
     let mac_bytes: [u8; 32] = mac.finalize().into_bytes().into();
@@ -175,9 +180,14 @@ pub fn nip44_encrypt(private_key: Result<&[u8; 32], &'static str>, peer_pubkey_h
 /// the output of `resolve_encryption_key()` directly.
 ///
 /// `ciphertext` is the base64-encoded blob returned by `nip44_encrypt`.
-pub fn nip44_decrypt(private_key: Result<&[u8; 32], &'static str>, peer_pubkey_hex: &str, ciphertext: &str) -> Result<String, String> {
+pub fn nip44_decrypt(
+    private_key: Result<&[u8; 32], &'static str>,
+    peer_pubkey_hex: &str,
+    ciphertext: &str,
+) -> Result<String, String> {
     let private_key = private_key.map_err(|e| e.to_string())?;
-    let payload = B64.decode(ciphertext.trim()).map_err(|e| format!("nip44_decrypt: invalid base64: {e}"))?;
+    let payload =
+        B64.decode(ciphertext.trim()).map_err(|e| format!("nip44_decrypt: invalid base64: {e}"))?;
 
     // Minimum length: version(1) + nonce(32) + padded_min(32) + mac(32) = 97 bytes.
     if payload.len() < 97 {
@@ -197,8 +207,8 @@ pub fn nip44_decrypt(private_key: Result<&[u8; 32], &'static str>, peer_pubkey_h
     let (chacha_key, chacha_nonce, hmac_key) = nip44_message_keys(&conversation_key, &nonce);
 
     // Verify HMAC before decrypting (encrypt-then-MAC).
-    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&*hmac_key)
-        .expect("HMAC accepts any key length");
+    let mut mac =
+        <Hmac<Sha256> as Mac>::new_from_slice(&*hmac_key).expect("HMAC accepts any key length");
     mac.update(&nonce);
     mac.update(ciphertext_bytes);
     mac.verify_slice(mac_bytes).map_err(|_| "nip44_decrypt: MAC verification failed")?;
@@ -236,7 +246,11 @@ type Aes256CbcDec = cbc::Decryptor<Aes256>;
 ///
 /// Uses the raw ECDH shared x-coordinate directly as the AES-256-CBC key.
 /// Returns `base64(ciphertext)?iv=base64(iv)`.
-pub fn nip04_encrypt(private_key: Result<&[u8; 32], &'static str>, peer_pubkey_hex: &str, plaintext: &str) -> Result<String, String> {
+pub fn nip04_encrypt(
+    private_key: Result<&[u8; 32], &'static str>,
+    peer_pubkey_hex: &str,
+    plaintext: &str,
+) -> Result<String, String> {
     let private_key = private_key.map_err(|e| e.to_string())?;
     let shared_x = ecdh_shared_x(private_key, peer_pubkey_hex)?;
 
@@ -245,7 +259,8 @@ pub fn nip04_encrypt(private_key: Result<&[u8; 32], &'static str>, peer_pubkey_h
 
     // AES-256-CBC with PKCS7 padding via the `cbc` crate.
     let cipher = Aes256CbcEnc::new((&*shared_x).into(), &iv.into());
-    let ciphertext = cipher.encrypt_padded_vec_mut::<cbc::cipher::block_padding::Pkcs7>(plaintext.as_bytes());
+    let ciphertext =
+        cipher.encrypt_padded_vec_mut::<cbc::cipher::block_padding::Pkcs7>(plaintext.as_bytes());
 
     let result = format!("{}?iv={}", B64.encode(&ciphertext), B64.encode(iv));
     Ok(result)
@@ -257,15 +272,21 @@ pub fn nip04_encrypt(private_key: Result<&[u8; 32], &'static str>, peer_pubkey_h
 /// the output of `resolve_encryption_key()` directly.
 ///
 /// Expects `ciphertext_b64?iv=iv_b64` wire format.
-pub fn nip04_decrypt(private_key: Result<&[u8; 32], &'static str>, peer_pubkey_hex: &str, ciphertext: &str) -> Result<String, String> {
+pub fn nip04_decrypt(
+    private_key: Result<&[u8; 32], &'static str>,
+    peer_pubkey_hex: &str,
+    ciphertext: &str,
+) -> Result<String, String> {
     let private_key = private_key.map_err(|e| e.to_string())?;
     // Split on "?iv=" — the IV is appended after the ciphertext.
-    let (ct_b64, iv_b64) = ciphertext
-        .split_once("?iv=")
-        .ok_or("nip04_decrypt: expected 'ciphertext?iv=iv' format")?;
+    let (ct_b64, iv_b64) =
+        ciphertext.split_once("?iv=").ok_or("nip04_decrypt: expected 'ciphertext?iv=iv' format")?;
 
-    let ct = B64.decode(ct_b64.trim()).map_err(|e| format!("nip04_decrypt: invalid ciphertext base64: {e}"))?;
-    let iv_bytes = B64.decode(iv_b64.trim()).map_err(|e| format!("nip04_decrypt: invalid IV base64: {e}"))?;
+    let ct = B64
+        .decode(ct_b64.trim())
+        .map_err(|e| format!("nip04_decrypt: invalid ciphertext base64: {e}"))?;
+    let iv_bytes =
+        B64.decode(iv_b64.trim()).map_err(|e| format!("nip04_decrypt: invalid IV base64: {e}"))?;
 
     if iv_bytes.len() != 16 {
         return Err(format!("nip04_decrypt: IV must be 16 bytes, got {}", iv_bytes.len()));
@@ -279,7 +300,8 @@ pub fn nip04_decrypt(private_key: Result<&[u8; 32], &'static str>, peer_pubkey_h
         .decrypt_padded_vec_mut::<cbc::cipher::block_padding::Pkcs7>(&ct)
         .map_err(|e| format!("nip04_decrypt: AES-CBC decryption failed: {e}"))?;
 
-    String::from_utf8(plaintext_bytes).map_err(|e| format!("nip04_decrypt: plaintext is not valid UTF-8: {e}"))
+    String::from_utf8(plaintext_bytes)
+        .map_err(|e| format!("nip04_decrypt: plaintext is not valid UTF-8: {e}"))
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────

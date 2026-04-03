@@ -278,7 +278,8 @@ impl HeartwoodServer {
             None => return Nip46Response::err(request_id, "nip44_encrypt: missing plaintext"),
         };
 
-        match crate::encrypt::nip44_encrypt(self.resolve_encryption_key(), &peer_pubkey, &plaintext) {
+        match crate::encrypt::nip44_encrypt(self.resolve_encryption_key(), &peer_pubkey, &plaintext)
+        {
             Ok(ct) => Nip46Response::ok(request_id, json!(ct)),
             Err(e) => Nip46Response::err(request_id, format!("nip44_encrypt: {e}")),
         }
@@ -302,7 +303,11 @@ impl HeartwoodServer {
             None => return Nip46Response::err(request_id, "nip44_decrypt: missing ciphertext"),
         };
 
-        match crate::encrypt::nip44_decrypt(self.resolve_encryption_key(), &peer_pubkey, &ciphertext) {
+        match crate::encrypt::nip44_decrypt(
+            self.resolve_encryption_key(),
+            &peer_pubkey,
+            &ciphertext,
+        ) {
             Ok(pt) => Nip46Response::ok(request_id, json!(pt)),
             Err(e) => Nip46Response::err(request_id, format!("nip44_decrypt: {e}")),
         }
@@ -326,7 +331,8 @@ impl HeartwoodServer {
             None => return Nip46Response::err(request_id, "nip04_encrypt: missing plaintext"),
         };
 
-        match crate::encrypt::nip04_encrypt(self.resolve_encryption_key(), &peer_pubkey, &plaintext) {
+        match crate::encrypt::nip04_encrypt(self.resolve_encryption_key(), &peer_pubkey, &plaintext)
+        {
             Ok(ct) => Nip46Response::ok(request_id, json!(ct)),
             Err(e) => Nip46Response::err(request_id, format!("nip04_encrypt: {e}")),
         }
@@ -350,7 +356,11 @@ impl HeartwoodServer {
             None => return Nip46Response::err(request_id, "nip04_decrypt: missing ciphertext"),
         };
 
-        match crate::encrypt::nip04_decrypt(self.resolve_encryption_key(), &peer_pubkey, &ciphertext) {
+        match crate::encrypt::nip04_decrypt(
+            self.resolve_encryption_key(),
+            &peer_pubkey,
+            &ciphertext,
+        ) {
             Ok(pt) => Nip46Response::ok(request_id, json!(pt)),
             Err(e) => Nip46Response::err(request_id, format!("nip04_decrypt: {e}")),
         }

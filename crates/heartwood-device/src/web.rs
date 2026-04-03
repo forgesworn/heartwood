@@ -202,11 +202,8 @@ async fn api_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let (mode, npub) = parse_payload(raw_payload);
 
     // For HSM mode, expose the configured serial port so the bridge binary can read it.
-    let serial_port = if mode == "hsm" {
-        raw_payload.strip_prefix("hsm:").map(|s| s.to_string())
-    } else {
-        None
-    };
+    let serial_port =
+        if mode == "hsm" { raw_payload.strip_prefix("hsm:").map(|s| s.to_string()) } else { None };
 
     // Read bunker URI if available
     let bunker_uri = std::fs::read_to_string(state.data_file("bunker-uri.txt"))
@@ -356,7 +353,9 @@ async fn api_setup(
             {
                 return (
                     StatusCode::BAD_REQUEST,
-                    axum::Json(json!({"error": "serial_port must be an absolute path with no null bytes or path traversal"})),
+                    axum::Json(
+                        json!({"error": "serial_port must be an absolute path with no null bytes or path traversal"}),
+                    ),
                 );
             }
             // HSM mode stores no cryptographic key material — only the serial port path.
@@ -1731,12 +1730,8 @@ fn read_frame(
         }
 
         // Verify CRC over everything except the trailing 4-byte CRC itself
-        let expected_crc = u32::from_be_bytes([
-            buf[total - 4],
-            buf[total - 3],
-            buf[total - 2],
-            buf[total - 1],
-        ]);
+        let expected_crc =
+            u32::from_be_bytes([buf[total - 4], buf[total - 3], buf[total - 2], buf[total - 1]]);
         let actual_crc = crc32fast::hash(&buf[..total - 4]);
         if actual_crc != expected_crc {
             return Err("CRC mismatch in ESP32 response".to_string());
@@ -1824,12 +1819,13 @@ async fn api_hsm_pin(
             .map_err(|e| format!("failed to write to serial port: {e}"))?;
 
         // Wait for ACK/NACK — the user has up to 30 seconds to press the button
-        let (frame_type, _) =
-            read_frame(&mut *port, std::time::Duration::from_secs(35))?;
+        let (frame_type, _) = read_frame(&mut *port, std::time::Duration::from_secs(35))?;
 
         match frame_type {
             FRAME_TYPE_ACK => Ok(()),
-            FRAME_TYPE_NACK => Err("ESP32 rejected the PIN change (button not pressed or PIN invalid)".to_string()),
+            FRAME_TYPE_NACK => {
+                Err("ESP32 rejected the PIN change (button not pressed or PIN invalid)".to_string())
+            }
             other => Err(format!("unexpected response frame type: 0x{other:02x}")),
         }
     })
