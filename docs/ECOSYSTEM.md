@@ -61,10 +61,15 @@ Provisioning a Heartwood device takes about five minutes. You generate or import
 
 ```mermaid
 sequenceDiagram
-    participant U as User
-    participant S as Sapwood
-    participant HW as Heartwood
-    participant B as Bark
+    box rgb(59, 130, 246) Client Tools
+        participant S as Sapwood
+        participant B as Bark
+    end
+    box rgb(249, 158, 11) Signing Device
+        participant HW as Heartwood
+    end
+
+    actor U as User
     participant WA as Web App
 
     U->>S: Connect via USB or HTTP
@@ -103,11 +108,17 @@ When a web app calls `window.nostr.signEvent()`, the request travels through Bar
 ```mermaid
 sequenceDiagram
     participant WA as Web App
-    participant P as provider.js
-    participant CS as content-script.js
-    participant BG as background.js
-    participant R as Nostr Relay
-    participant HW as Heartwood
+    box rgb(59, 130, 246) Bark Extension
+        participant P as provider.js
+        participant CS as content-script.js
+        participant BG as background.js
+    end
+    box rgb(139, 92, 246) Network
+        participant R as Nostr Relay
+    end
+    box rgb(249, 158, 11) Signing Device
+        participant HW as Heartwood
+    end
 
     WA->>P: signEvent(event)
     P->>CS: postMessage
