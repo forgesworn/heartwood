@@ -1,11 +1,11 @@
 [package]
-name = "heartwood-core"
+name = "nsec-tree-rs"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "nsec-tree deterministic identity derivation — Rust port"
-keywords = ["nostr", "nsec-tree", "signing", "identity", "cryptography"]
+description = "Deterministic Nostr sub-identity derivation — Rust port of nsec-tree. HMAC-based one-way key hierarchy with Schnorr linkage proofs."
+keywords = ["nostr", "nsec-tree", "signing", "identity", "secp256k1"]
 categories = ["cryptography", "authentication"]
 
 [dependencies]

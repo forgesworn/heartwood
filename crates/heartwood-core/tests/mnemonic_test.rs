@@ -1,5 +1,5 @@
-use heartwood_core::derive::derive;
-use heartwood_core::root::{from_mnemonic, from_nsec_bytes};
+use nsec_tree_rs::derive::derive;
+use nsec_tree_rs::root::{from_mnemonic, from_nsec_bytes};
 
 const MNEMONIC: &str =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";

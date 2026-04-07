@@ -1,4 +1,4 @@
-use heartwood_core::generate_mnemonic;
+use nsec_tree_rs::generate_mnemonic;
 
 #[test]
 fn generate_mnemonic_returns_24_words() {

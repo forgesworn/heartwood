@@ -9,8 +9,8 @@ keywords = ["nostr", "raspberry-pi", "signing", "tor", "hardware"]
 categories = ["cryptography", "command-line-utilities"]
 
 [dependencies]
-heartwood-core = { path = "../heartwood-core" }
-heartwood-nip46 = { path = "../heartwood-nip46" }
+nsec-tree-rs = { path = "../heartwood-core" }
+nip46-signer = { path = "../heartwood-nip46" }
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }

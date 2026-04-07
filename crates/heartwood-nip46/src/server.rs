@@ -3,7 +3,7 @@
 
 use std::sync::Mutex;
 
-use heartwood_core::{
+use nsec_tree_rs::{
     create_blind_proof, create_full_proof, derive, derive_persona, recover, verify_proof, Identity,
     LinkageProof, TreeRoot,
 };

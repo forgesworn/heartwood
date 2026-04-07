@@ -2,7 +2,7 @@
 //!
 //! Run with: `cargo run -p heartwood-core --example basic_usage`
 
-fn main() -> Result<(), heartwood_core::HeartwoodError> {
+fn main() -> Result<(), nsec_tree_rs::HeartwoodError> {
     // --- 1. Create a tree root from a BIP-39 mnemonic ---
     //
     // The mnemonic is the master secret. Everything derives from it.
@@ -11,24 +11,24 @@ fn main() -> Result<(), heartwood_core::HeartwoodError> {
     let mnemonic = "abandon abandon abandon abandon abandon abandon \
                     abandon abandon abandon abandon abandon about";
 
-    let root = heartwood_core::from_mnemonic(mnemonic, None)?;
+    let root = nsec_tree_rs::from_mnemonic(mnemonic, None)?;
     println!("Master pubkey: {}", root.master_pubkey);
 
     // --- 2. Derive child identities by purpose and index ---
     //
     // Each (purpose, index) pair produces a deterministic, unique keypair.
     // Different purposes create unlinkable identity sets.
-    let social = heartwood_core::derive(&root, "social", 0)?;
+    let social = nsec_tree_rs::derive(&root, "social", 0)?;
     println!("\nSocial identity:");
     println!("  npub: {}", social.npub);
     println!("  purpose: {}, index: {}", social.purpose, social.index);
 
-    let commerce = heartwood_core::derive(&root, "commerce", 0)?;
+    let commerce = nsec_tree_rs::derive(&root, "commerce", 0)?;
     println!("\nCommerce identity:");
     println!("  npub: {}", commerce.npub);
 
     // Same purpose + different index = different identity, same category
-    let social_alt = heartwood_core::derive(&root, "social", 1)?;
+    let social_alt = nsec_tree_rs::derive(&root, "social", 1)?;
     assert_ne!(social.npub, social_alt.npub);
     println!("\nSocial alt (index 1): {}", social_alt.npub);
 
@@ -36,27 +36,27 @@ fn main() -> Result<(), heartwood_core::HeartwoodError> {
     //
     // Personas are a convenience wrapper: derive_persona("work") is
     // equivalent to derive("nostr:persona:work", 0).
-    let work = heartwood_core::derive_persona(&root, "work", None)?;
+    let work = nsec_tree_rs::derive_persona(&root, "work", None)?;
     println!("\nWork persona: {}", work.identity.npub);
 
     // Sub-identities from a persona (two-level hierarchy)
-    let work_dms = heartwood_core::derive_from_persona(&work, "dms", None)?;
+    let work_dms = nsec_tree_rs::derive_from_persona(&work, "dms", None)?;
     println!("  Work DMs sub-identity: {}", work_dms.npub);
 
     // --- 4. Linkage proofs ---
     //
     // Prove that a child key belongs to the master, without revealing
     // the derivation path (blind) or with it (full).
-    let blind_proof = heartwood_core::create_blind_proof(&root, &social)?;
-    assert!(heartwood_core::verify_proof(&blind_proof)?);
+    let blind_proof = nsec_tree_rs::create_blind_proof(&root, &social)?;
+    assert!(nsec_tree_rs::verify_proof(&blind_proof)?);
     println!(
         "\nBlind proof verified: master {} owns child {}",
         &blind_proof.master_pubkey[..12],
         &blind_proof.child_pubkey[..12]
     );
 
-    let full_proof = heartwood_core::create_full_proof(&root, &social)?;
-    assert!(heartwood_core::verify_proof(&full_proof)?);
+    let full_proof = nsec_tree_rs::create_full_proof(&root, &social)?;
+    assert!(nsec_tree_rs::verify_proof(&full_proof)?);
     println!(
         "Full proof: purpose={}, index={}",
         full_proof.purpose.as_deref().unwrap_or("?"),
@@ -67,7 +67,7 @@ fn main() -> Result<(), heartwood_core::HeartwoodError> {
     //
     // Scan a set of purposes to rediscover all derived identities.
     // Useful after restoring from mnemonic backup.
-    let found = heartwood_core::recover(
+    let found = nsec_tree_rs::recover(
         &root,
         &["social".to_string(), "commerce".to_string()],
         None, // default scan range (20 indices per purpose)

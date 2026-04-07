@@ -3,7 +3,7 @@
 //! These vectors MUST match the TypeScript nsec-tree implementation byte-for-byte.
 //! If any of these tests break, a backwards-incompatible change has been introduced.
 
-use heartwood_core::*;
+use nsec_tree_rs::*;
 
 const MNEMONIC: &str =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";

@@ -1,8 +1,8 @@
-use heartwood_core::derive::derive;
-use heartwood_core::proof::{create_blind_proof, create_full_proof, verify_proof};
-use heartwood_core::root::from_nsec_bytes;
+use nsec_tree_rs::derive::derive;
+use nsec_tree_rs::proof::{create_blind_proof, create_full_proof, verify_proof};
+use nsec_tree_rs::root::from_nsec_bytes;
 
-fn root_01() -> heartwood_core::types::TreeRoot {
+fn root_01() -> nsec_tree_rs::types::TreeRoot {
     let nsec_bytes = [0x01u8; 32];
     from_nsec_bytes(&nsec_bytes).expect("root creation must succeed")
 }

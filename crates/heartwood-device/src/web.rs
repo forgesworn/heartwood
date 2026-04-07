@@ -107,13 +107,13 @@ async fn serve_index() -> impl IntoResponse {
 /// and is not available until the bridge connects.
 fn parse_payload(payload: &str) -> (String, String) {
     if let Some(nsec) = payload.strip_prefix("bunker:") {
-        let npub = heartwood_core::npub_from_nsec(nsec).unwrap_or_default();
+        let npub = nsec_tree_rs::npub_from_nsec(nsec).unwrap_or_default();
         ("bunker".to_string(), npub)
     } else if let Some(rest) = payload.strip_prefix("tree-mnemonic:") {
         // Format: "tree-mnemonic:{passphrase}:{mnemonic}" or "tree-mnemonic::{mnemonic}"
         let (pass, mnemonic) = rest.split_once(':').unwrap_or(("", rest));
         let pass = if pass.is_empty() { None } else { Some(pass) };
-        let npub = heartwood_core::from_mnemonic(mnemonic, pass)
+        let npub = nsec_tree_rs::from_mnemonic(mnemonic, pass)
             .map(|r| {
                 let n = r.master_pubkey.clone();
                 r.destroy();
@@ -122,7 +122,7 @@ fn parse_payload(payload: &str) -> (String, String) {
             .unwrap_or_default();
         ("tree-mnemonic".to_string(), npub)
     } else if let Some(nsec) = payload.strip_prefix("tree-nsec:") {
-        let npub = heartwood_core::from_nsec(nsec)
+        let npub = nsec_tree_rs::from_nsec(nsec)
             .map(|r| {
                 let n = r.master_pubkey.clone();
                 r.destroy();
@@ -278,7 +278,7 @@ async fn api_setup(
                     )
                 }
             };
-            match heartwood_core::npub_from_nsec(nsec) {
+            match nsec_tree_rs::npub_from_nsec(nsec) {
                 Ok(npub) => (npub, format!("bunker:{nsec}")),
                 Err(e) => {
                     return (StatusCode::BAD_REQUEST, axum::Json(json!({"error": format!("{e}")})))
@@ -295,7 +295,7 @@ async fn api_setup(
                     )
                 }
             };
-            match heartwood_core::from_mnemonic(mnemonic, req.passphrase.as_deref()) {
+            match nsec_tree_rs::from_mnemonic(mnemonic, req.passphrase.as_deref()) {
                 Ok(root) => {
                     let npub = root.master_pubkey.clone();
                     root.destroy();
@@ -321,7 +321,7 @@ async fn api_setup(
                     )
                 }
             };
-            match heartwood_core::from_nsec(nsec) {
+            match nsec_tree_rs::from_nsec(nsec) {
                 Ok(root) => {
                     let npub = root.master_pubkey.clone();
                     root.destroy();
@@ -406,7 +406,7 @@ async fn api_generate_mnemonic(State(state): State<Arc<AppState>>) -> impl IntoR
     }
     drop(storage);
 
-    match heartwood_core::generate_mnemonic() {
+    match nsec_tree_rs::generate_mnemonic() {
         Ok(words) => (StatusCode::OK, axum::Json(json!({"words": words}))),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, axum::Json(json!({"error": format!("{e}")}))),
     }
@@ -448,7 +448,7 @@ async fn api_derive_client_key(
     let root = if let Some(rest) = payload.strip_prefix("tree-mnemonic:") {
         let (pass, mnemonic) = rest.split_once(':').unwrap_or(("", rest));
         let pass = if pass.is_empty() { None } else { Some(pass) };
-        match heartwood_core::from_mnemonic(mnemonic, pass) {
+        match nsec_tree_rs::from_mnemonic(mnemonic, pass) {
             Ok(r) => r,
             Err(e) => {
                 return (
@@ -458,7 +458,7 @@ async fn api_derive_client_key(
             }
         }
     } else if let Some(nsec) = payload.strip_prefix("tree-nsec:") {
-        match heartwood_core::from_nsec(nsec) {
+        match nsec_tree_rs::from_nsec(nsec) {
             Ok(r) => r,
             Err(e) => {
                 return (
@@ -468,7 +468,7 @@ async fn api_derive_client_key(
             }
         }
     } else if let Some(nsec) = payload.strip_prefix("bunker:") {
-        match heartwood_core::from_nsec(nsec) {
+        match nsec_tree_rs::from_nsec(nsec) {
             Ok(r) => r,
             Err(e) => {
                 return (
@@ -496,7 +496,7 @@ async fn api_derive_client_key(
     };
 
     // Derive the child identity
-    let mut identity = match heartwood_core::derive(&root, &req.name, 0) {
+    let mut identity = match nsec_tree_rs::derive(&root, &req.name, 0) {
         Ok(id) => id,
         Err(e) => {
             root.destroy();
@@ -508,8 +508,8 @@ async fn api_derive_client_key(
     };
     root.destroy();
 
-    let pubkey_hex = heartwood_core::encoding::bytes_to_hex(&identity.public_key);
-    let secret_hex = heartwood_core::encoding::bytes_to_hex(identity.private_key.as_ref());
+    let pubkey_hex = nsec_tree_rs::encoding::bytes_to_hex(&identity.public_key);
+    let secret_hex = nsec_tree_rs::encoding::bytes_to_hex(identity.private_key.as_ref());
     let npub = identity.npub.clone();
 
     // Write secret to disk
@@ -588,14 +588,14 @@ async fn api_list_client_keys(State(state): State<Arc<AppState>>) -> impl IntoRe
 
                 // Read the secret hex to derive pubkey (don't expose the secret)
                 if let Ok(hex_str) = std::fs::read_to_string(&path) {
-                    if let Ok(bytes) = heartwood_core::encoding::hex_to_bytes(hex_str.trim()) {
+                    if let Ok(bytes) = nsec_tree_rs::encoding::hex_to_bytes(hex_str.trim()) {
                         if bytes.len() == 32 {
                             let bytes_arr: [u8; 32] = bytes.try_into().unwrap();
                             // Derive pubkey from secret using nsec encoding round-trip
-                            let nsec = heartwood_core::encode_nsec(&bytes_arr);
-                            if let Ok(npub) = heartwood_core::npub_from_nsec(&nsec) {
-                                let pubkey = heartwood_core::encoding::bytes_to_hex(
-                                    &heartwood_core::decode_npub(&npub).unwrap_or_default(),
+                            let nsec = nsec_tree_rs::encode_nsec(&bytes_arr);
+                            if let Ok(npub) = nsec_tree_rs::npub_from_nsec(&nsec) {
+                                let pubkey = nsec_tree_rs::encoding::bytes_to_hex(
+                                    &nsec_tree_rs::decode_npub(&npub).unwrap_or_default(),
                                 );
                                 keys.push(json!({"name": name, "npub": npub, "pubkey": pubkey}));
                             }

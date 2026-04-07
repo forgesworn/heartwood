@@ -1,6 +1,6 @@
-use heartwood_nip46::methods::{Nip46Request, Nip46Response};
-use heartwood_nip46::permissions::ClientPermissions;
-use heartwood_nip46::session::{ClientSession, SessionManager};
+use nip46_signer::methods::{Nip46Request, Nip46Response};
+use nip46_signer::permissions::ClientPermissions;
+use nip46_signer::session::{ClientSession, SessionManager};
 
 // --- Nip46Request Debug redaction ---
 

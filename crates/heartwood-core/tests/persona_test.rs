@@ -1,7 +1,7 @@
-use heartwood_core::persona::{derive_from_persona, derive_persona};
-use heartwood_core::root::from_nsec_bytes;
+use nsec_tree_rs::persona::{derive_from_persona, derive_persona};
+use nsec_tree_rs::root::from_nsec_bytes;
 
-fn root_01() -> heartwood_core::types::TreeRoot {
+fn root_01() -> nsec_tree_rs::types::TreeRoot {
     let nsec_bytes = [0x01u8; 32];
     from_nsec_bytes(&nsec_bytes).expect("root creation must succeed")
 }

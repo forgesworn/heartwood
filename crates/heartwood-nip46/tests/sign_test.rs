@@ -1,4 +1,4 @@
-use heartwood_nip46::sign::sign_event;
+use nip46_signer::sign::sign_event;
 use serde_json::json;
 
 #[test]

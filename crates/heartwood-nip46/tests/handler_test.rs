@@ -3,9 +3,9 @@
 
 use std::collections::HashSet;
 
-use heartwood_core::root::from_nsec_bytes;
-use heartwood_nip46::methods::Nip46Request;
-use heartwood_nip46::server::HeartwoodServer;
+use nsec_tree_rs::root::from_nsec_bytes;
+use nip46_signer::methods::Nip46Request;
+use nip46_signer::server::HeartwoodServer;
 
 /// 64-char lowercase hex public key used as the test client identity.
 const CLIENT: &str = "d6b3a6496c529d8e7f6e10cc7bb89f794ef931770c700f68a859cd24234a2645";

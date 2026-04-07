@@ -769,6 +769,19 @@ async function writeRelayStatus() {
 setTimeout(writeRelayStatus, 3000)
 setInterval(writeRelayStatus, 15000)
 
+// --- 8b. Periodic subscription refresh ---
+// Relays may silently drop subscriptions (idle timeout, restart) while keeping
+// the WebSocket open. SimplePool's status check sees connected=true but the
+// NIP-46 event filter is gone. Cycling the subscription every 5 minutes
+// ensures we stay reachable overnight.
+
+const SUBSCRIPTION_REFRESH_MS = 5 * 60 * 1000
+
+setInterval(() => {
+  connectRelays(relays)
+  console.log('Subscription refreshed')
+}, SUBSCRIPTION_REFRESH_MS)
+
 // --- 9. Clean shutdown ---
 
 function shutdown() {

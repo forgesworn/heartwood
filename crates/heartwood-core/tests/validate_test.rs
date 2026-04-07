@@ -1,4 +1,4 @@
-use heartwood_core::validate::validate_purpose;
+use nsec_tree_rs::validate::validate_purpose;
 
 #[test]
 fn valid_purposes() {

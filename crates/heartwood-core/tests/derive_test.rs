@@ -1,9 +1,9 @@
-use heartwood_core::derive::{derive, derive_from_identity};
-use heartwood_core::root::from_nsec_bytes;
+use nsec_tree_rs::derive::{derive, derive_from_identity};
+use nsec_tree_rs::root::from_nsec_bytes;
 
 /// Frozen test vectors — MUST match TypeScript nsec-tree byte-for-byte.
 /// Root key: 0x01-fill (32 bytes of 0x01).
-fn root_01() -> heartwood_core::types::TreeRoot {
+fn root_01() -> nsec_tree_rs::types::TreeRoot {
     let nsec_bytes = [0x01u8; 32];
     from_nsec_bytes(&nsec_bytes).expect("root creation must succeed")
 }
