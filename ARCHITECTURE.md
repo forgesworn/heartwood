@@ -44,7 +44,7 @@ graph TB
 
 ## NIP-46 methods
 
-Heartwood supports the standard NIP-46 methods plus 8 extensions for identity management:
+Heartwood supports the standard NIP-46 methods plus 7 extensions for identity management:
 
 | Method | Type | Description |
 |--------|------|-------------|
@@ -60,7 +60,7 @@ Heartwood supports the standard NIP-46 methods plus 8 extensions for identity ma
 | `heartwood_derive_persona` | Extension | Derive a named persona |
 | `heartwood_switch` | Extension | Switch active signing identity |
 | `heartwood_create_proof` | Extension | Create a linkage proof |
-| `heartwood_get_master` | Extension | Return master npub |
+| `heartwood_verify_proof` | Extension | Verify a linkage proof |
 | `heartwood_recover` | Extension | Scan for derived identities |
 
 ## Permission model
