@@ -8,42 +8,60 @@ Heartwood is a dedicated Nostr signing appliance. It runs on a Raspberry Pi Zero
 
 The repo has two runtime components: a Rust binary (`heartwood-device`) and a Node.js sidecar (`bunker/`). The Rust side handles the web UI, storage, Tor, and OLED. The Node.js bunker sidecar connects to Nostr relays as a NIP-46 server, handling `connect` and `ping` itself and forwarding signing/derivation requests to the Rust crate library.
 
-The Rust workspace is split into three crates with strict dependency direction: device depends on nip46, nip46 depends on core. Core has no I/O, no async, no network -- pure cryptography.
+## Hexagonal architecture
+
+The Rust workspace follows hexagonal architecture. Dependencies flow inward only: adapters depend on ports, ports depend on the domain core. The core has no I/O, no async, no network -- pure cryptography. The port layer translates NIP-46 protocol concerns without touching storage or the network. Adapters (the device binary and the bunker sidecar) own all I/O.
 
 ```mermaid
 graph TB
-    subgraph "heartwood-device (binary)"
-        WEB["Web UI + HTTP API<br/>(Axum)"]
+    subgraph ADAPTERS["Adapters — heartwood-device + bunker"]
+        WEB["Web UI + HTTP API"]
+        BUNKER["Bunker sidecar<br/>(Node.js, relay-facing)"]
         TOR["Tor hidden service"]
         STORE["Encrypted storage<br/>(AES-256-GCM + Argon2id)"]
         OLED["OLED display<br/>(SSD1306)"]
-        AUDIT["Audit log<br/>(1000-entry ring buffer)"]
         SERIAL["Serial port<br/>(ESP32 HSM)"]
+        AUDIT["Audit log<br/>(1000-entry ring buffer)"]
     end
 
-    subgraph "heartwood-nip46 (library)"
+    subgraph PORTS["Ports — heartwood-nip46"]
         SERVER["NIP-46 server"]
         SESS["Session manager"]
         PERMS["Permissions engine"]
         ENC["NIP-44 / NIP-04<br/>encryption"]
     end
 
-    subgraph "heartwood-core (library)"
+    subgraph CORE["Domain — heartwood-core"]
         DERIVE["Key derivation<br/>(HMAC-SHA256)"]
         SIGN["BIP-340 signing"]
         PROOF["Linkage proofs"]
         ROOT["Tree root creation"]
     end
 
-    WEB --> SERVER
+    WEB -->|adapter → port| SERVER
+    BUNKER -->|adapter → port| SERVER
     SERVER --> SESS
     SERVER --> PERMS
     SERVER --> ENC
-    SERVER --> SIGN
-    SERVER --> DERIVE
+    SERVER -->|port → domain| SIGN
+    SERVER -->|port → domain| DERIVE
     DERIVE --> ROOT
 
-    BUNKER["Bunker sidecar<br/>(Node.js, NIP-46 relay client)"] --> SERVER
+    style WEB fill:#3b82f6,color:#fff
+    style BUNKER fill:#8b5cf6,color:#fff
+    style TOR fill:#8b5cf6,color:#fff
+    style STORE fill:#ef4444,color:#fff
+    style SERIAL fill:#ef4444,color:#fff
+    style OLED fill:#f59e0b,color:#000
+    style AUDIT fill:#f59e0b,color:#000
+    style SERVER fill:#1e293b,color:#e2e8f0
+    style SESS fill:#1e293b,color:#e2e8f0
+    style PERMS fill:#1e293b,color:#e2e8f0
+    style ENC fill:#1e293b,color:#e2e8f0
+    style DERIVE fill:#1e293b,color:#e2e8f0
+    style SIGN fill:#1e293b,color:#e2e8f0
+    style PROOF fill:#1e293b,color:#e2e8f0
+    style ROOT fill:#1e293b,color:#e2e8f0
 ```
 
 The bunker sidecar (`bunker/index.mjs`) connects to Nostr relays, handles NIP-46 `connect` and `ping`, and delegates signing/derivation to the Rust NIP-46 server. It has its own test suite (56 tests) and systemd unit (`heartwood-bunker@.service`).
