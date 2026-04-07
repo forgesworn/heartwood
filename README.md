@@ -65,6 +65,8 @@ cargo run -p heartwood-device # Run device binary (terminal mode)
 
 ## Architecture
 
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the full internal architecture with diagrams.
+
 ```
 heartwood-core     Pure crypto: nsec-tree derivation, signing, proofs, personas
 heartwood-nip46    NIP-46 protocol: method dispatch, permissions, sessions
@@ -72,6 +74,8 @@ heartwood-device   Device binary: Tor, web UI, storage, OLED
 ```
 
 ## Ecosystem
+
+See [docs/ECOSYSTEM.md](docs/ECOSYSTEM.md) for the full ecosystem overview with cross-cutting diagrams.
 
 Part of the [ForgeSworn](https://github.com/forgesworn) open-source ecosystem:
 
