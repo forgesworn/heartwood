@@ -83,6 +83,7 @@ Part of the [ForgeSworn](https://github.com/forgesworn) open-source ecosystem:
 - [shamir-words](https://github.com/forgesworn/shamir-words) -- Mnemonic threshold backup
 - [canary-kit](https://github.com/forgesworn/canary-kit) -- Dead man's switch
 - [toll-booth](https://github.com/forgesworn/toll-booth) -- L402 API payments
+- [bark](https://github.com/forgesworn/bark) -- Browser extension for NIP-07 signing via Heartwood
 - [bray](https://github.com/forgesworn/bray) -- Nostr MCP server
 
 ## Part of the ForgeSworn Toolkit
