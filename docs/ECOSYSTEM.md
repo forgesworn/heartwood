@@ -8,6 +8,7 @@ The ForgeSworn identity stack is a set of open source tools that move Nostr key 
 graph TB
     subgraph External["External"]
         WA["Any Nostr App"]
+        AG["Nostr Agents<br/>(bray, Amethyst, etc.)"]
         Relay["Nostr Relays"]
     end
 
@@ -27,6 +28,7 @@ graph TB
 
     WA -->|"window.nostr"| Bark
     Bark -->|"NIP-46"| Relay
+    AG -->|"NIP-46<br/>(bunker URI)"| Relay
     Relay -->|"NIP-46"| HW
     Sapwood -->|"Web Serial / HTTP"| HW
     HW <-->|"Serial frames"| ESP
@@ -34,13 +36,14 @@ graph TB
 
     style Bark fill:#3b82f6,color:#fff
     style Sapwood fill:#3b82f6,color:#fff
+    style AG fill:#3b82f6,color:#fff
     style HW fill:#f59e0b,color:#000
     style ESP fill:#ef4444,color:#fff
     style NT fill:#1e293b,color:#e2e8f0
     style Relay fill:#8b5cf6,color:#fff
 ```
 
-**Bark** is a browser extension that provides the standard `window.nostr` API (NIP-07). It holds no keys. Every signing request is forwarded over NIP-46 to your Heartwood device.
+**Bark** is a browser extension that provides the standard `window.nostr` API (NIP-07). It holds no keys. Every signing request is forwarded over NIP-46 to your Heartwood device. Bark is one way in -- any NIP-46 client (bray, Amethyst, or any agent with a bunker URI) can connect directly to Heartwood via relay without Bark.
 
 **Heartwood** is a dedicated signing appliance running on a Raspberry Pi Zero 2 W. It stores your master secret (encrypted at rest with AES-256-GCM + Argon2id), derives child identities using nsec-tree's HMAC-SHA256 scheme, and signs events with BIP-340 Schnorr. Accessible over Tor.
 
