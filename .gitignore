@@ -22,3 +22,12 @@ bunker/node_modules/
 *.secret
 credentials.json
 bunker-uri.txt
+
+# Local AI agent settings
+.claude/
+
+# MCP config (may contain private keys)
+.mcp.json
+
+# Playwright MCP artifacts
+.playwright-mcp/
