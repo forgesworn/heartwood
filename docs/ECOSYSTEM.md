@@ -42,25 +42,17 @@ graph LR
         H_ESP["ESP32 HSM<br/>(master secrets)"]
     end
 
-    subgraph Portable["Portable"]
-        P_ESP["ESP32 + battery<br/>(child key only)"]
-        P_BLE["BLE to phone"]
-    end
-
     H_PI <-->|"USB serial"| H_ESP
 
     style S_PI fill:#f59e0b,color:#000
     style H_PI fill:#f59e0b,color:#000
     style H_ESP fill:#ef4444,color:#fff
-    style P_ESP fill:#ef4444,color:#fff
-    style P_BLE fill:#3b82f6,color:#fff
 ```
 
 | Tier | Key material | Signing | Attack surface |
 |------|-------------|---------|----------------|
 | **Soft** | Encrypted on Pi (Argon2id + XChaCha20-Poly1305) | Pi signs | Pi compromise = key at risk |
 | **Hard** | On ESP32 only, Pi is zero-trust | ESP32 signs, Pi relays ciphertext | Pi compromise = no key access |
-| **Portable** | Child key on battery ESP32 | BLE to phone, short range | Loss = burn that branch, master untouched |
 
 **Sapwood** is a browser-based management UI. Provisions master identities, manages TOFU client policies, uploads firmware, monitors logs. Connects via Web Serial (USB) or HTTP (bridge on the Pi). 21 KB gzipped.
 
@@ -219,10 +211,6 @@ graph TB
     style SIG fill:#16c79a,color:#000
     style BTN fill:#ef4444,color:#fff
 ```
-
-### Portable tier (battery ESP32 + BLE, roadmap)
-
-A battery-powered ESP32 holds a **child key** derived from the home HSM (`purpose="device/mobile"`). Only BLE enabled for short-range phone signing. If lost or compromised, burn that branch on the HSM and derive a new child at the next index. The master and all other branches are untouched.
 
 ---
 

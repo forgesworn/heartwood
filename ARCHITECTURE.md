@@ -14,7 +14,7 @@ The Rust workspace follows hexagonal architecture. Dependencies flow inward only
 
 ```mermaid
 graph TB
-    subgraph ADAPTERS["Adapters — heartwood-device + bunker"]
+    subgraph ADAPTERS["Adapters - heartwood-device + bunker"]
         WEB["Web UI + HTTP API"]
         BUNKER["Bunker sidecar<br/>(Node.js, relay-facing)"]
         TOR["Tor hidden service"]
@@ -24,14 +24,14 @@ graph TB
         AUDIT["Audit log<br/>(1000-entry ring buffer)"]
     end
 
-    subgraph PORTS["Ports — heartwood-nip46"]
+    subgraph PORTS["Ports - heartwood-nip46"]
         SERVER["NIP-46 server"]
         SESS["Session manager"]
         PERMS["Permissions engine"]
         ENC["NIP-44 / NIP-04<br/>encryption"]
     end
 
-    subgraph CORE["Domain — heartwood-core"]
+    subgraph CORE["Domain - heartwood-core"]
         DERIVE["Key derivation<br/>(HMAC-SHA256)"]
         SIGN["BIP-340 signing"]
         PROOF["Linkage proofs"]
