@@ -51,7 +51,7 @@ graph LR
 
 | Tier | Key material | Signing | Attack surface |
 |------|-------------|---------|----------------|
-| **Soft** | Encrypted on Pi (Argon2id + XChaCha20-Poly1305) | Pi signs | Pi compromise = key at risk |
+| **Soft** | Encrypted on Pi (AES-256-GCM + Argon2id) | Pi signs | Pi compromise = key at risk |
 | **Hard** | On ESP32 only, Pi is zero-trust | ESP32 signs, Pi relays ciphertext | Pi compromise = no key access |
 
 **Sapwood** is a browser-based management UI. Provisions master identities, manages TOFU client policies, uploads firmware, monitors logs. Connects via Web Serial (USB) or HTTP (bridge on the Pi). 21 KB gzipped.
@@ -63,7 +63,7 @@ graph LR
 When a new NIP-46 client connects to Heartwood for the first time, it isn't automatically trusted. The device holds a connection slot table with per-client policies:
 
 - **Auto-approve:** trusted clients sign without prompting
-- **Ask:** Sapwood shows an approval queue for out-of-policy requests
+- **Ask:** the device web UI shows an approval prompt for out-of-policy requests
 - **Kind restrictions:** per-client allowlists for which event kinds can be signed
 - **Rate limiting:** 60 requests/minute per client
 
@@ -172,7 +172,7 @@ The most important question for any signing architecture: where is the key mater
 
 ### Soft tier (Pi standalone)
 
-The master secret is encrypted at rest on the Pi's SD card with Argon2id + XChaCha20-Poly1305. It's only decrypted into memory when the device is unlocked via Sapwood.
+The master secret is encrypted at rest on the Pi's SD card with AES-256-GCM + Argon2id. It's only decrypted into memory when the device is unlocked via PIN entry in the web UI.
 
 ```mermaid
 graph TB
