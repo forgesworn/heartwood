@@ -14,7 +14,7 @@ use axum::{
     Router,
 };
 use password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
-use rand_core::OsRng;
+use rand_core::{OsRng, RngCore};
 use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::Mutex;
@@ -1667,6 +1667,134 @@ async fn api_pair(
     )
 }
 
+// --- Connect slots (pre-authorised pairing with secret) ---
+
+#[derive(Deserialize)]
+struct CreateSlotRequest {
+    label: String,
+}
+
+/// `POST /api/slots/create` — create a pre-authorised connect slot.
+///
+/// Generates a random secret, stores it in `slots.json`, and returns a
+/// bunker URI with `&secret=<secret>` embedded. When a NIP-46 client
+/// connects with the matching secret, the bunker auto-approves it with
+/// the slot's label.
+async fn api_create_slot(
+    State(state): State<Arc<AppState>>,
+    axum::Json(req): axum::Json<CreateSlotRequest>,
+) -> impl IntoResponse {
+    let label = req.label.trim().to_string();
+    if label.is_empty() || label.len() > 64 {
+        return (
+            StatusCode::BAD_REQUEST,
+            axum::Json(json!({"error": "label must be 1–64 characters"})),
+        );
+    }
+
+    // Generate random secret (32 bytes hex)
+    let mut secret_bytes = [0u8; 32];
+    rand_core::OsRng.fill_bytes(&mut secret_bytes);
+    let secret: String = secret_bytes.iter().map(|b| format!("{b:02x}")).collect();
+
+    // Read bunker URI
+    let bunker_uri = match std::fs::read_to_string(state.data_file("bunker-uri.txt")) {
+        Ok(uri) => uri.trim().to_string(),
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(json!({"error": "bunker not running"})),
+            );
+        }
+    };
+
+    // Load existing slots
+    let slots_path = state.data_file("slots.json");
+    let mut slots: serde_json::Value = std::fs::read_to_string(&slots_path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| json!({}));
+
+    if !slots.is_object() {
+        slots = json!({});
+    }
+
+    // Store slot keyed by secret
+    slots.as_object_mut().unwrap().insert(
+        secret.clone(),
+        json!({
+            "label": label,
+            "createdAt": chrono_now_iso(),
+        }),
+    );
+
+    if let Err(e) = std::fs::write(&slots_path, serde_json::to_string_pretty(&slots).unwrap()) {
+        tracing::error!("Failed to write slots.json: {e}");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            axum::Json(json!({"error": "failed to save slot"})),
+        );
+    }
+    // Restrictive permissions on slots.json (contains secrets)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&slots_path, std::fs::Permissions::from_mode(0o600));
+    }
+
+    // Build bunker URI with secret
+    let slot_uri = format!("{}&secret={}", bunker_uri, secret);
+    info!("Created connect slot '{}' with secret {}...", label, &secret[..12]);
+
+    (
+        StatusCode::OK,
+        axum::Json(json!({
+            "label": label,
+            "secret": secret,
+            "bunker_uri": slot_uri,
+        })),
+    )
+}
+
+/// `GET /api/slots` — list all connect slots with bunker URIs.
+async fn api_list_slots(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let slots_path = state.data_file("slots.json");
+    let raw: serde_json::Value = std::fs::read_to_string(&slots_path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| json!({}));
+
+    let bunker_uri = std::fs::read_to_string(state.data_file("bunker-uri.txt"))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+
+    // Transform { secret: { label, ... } } → array of { label, secret, bunker_uri, clients }
+    let slots: Vec<serde_json::Value> = raw
+        .as_object()
+        .map(|obj| {
+            obj.iter()
+                .map(|(secret, info)| {
+                    let slot_uri = if bunker_uri.is_empty() {
+                        String::new()
+                    } else {
+                        format!("{}&secret={}", bunker_uri, secret)
+                    };
+                    json!({
+                        "label": info.get("label").and_then(|v| v.as_str()).unwrap_or("unnamed"),
+                        "secret": secret,
+                        "bunker_uri": slot_uri,
+                        "createdAt": info.get("createdAt"),
+                        "clients": info.get("clients").cloned().unwrap_or_else(|| json!([])),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    axum::Json(json!(slots))
+}
+
 /// Frame type bytes for the ESP32 serial protocol.
 const FRAME_MAGIC: [u8; 2] = [0x48, 0x57];
 const FRAME_TYPE_SET_PIN: u8 = 0x25;
@@ -1902,6 +2030,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/clients/revoke", post(api_revoke_client))
         .route("/api/clients/clear", post(api_clear_clients))
         .route("/api/pair", post(api_pair))
+        .route("/api/slots", get(api_list_slots))
+        .route("/api/slots/create", post(api_create_slot))
         .route("/api/generate-mnemonic", get(api_generate_mnemonic))
         .route("/api/wordlist", get(api_wordlist))
         .route("/api/client-keys", get(api_list_client_keys))

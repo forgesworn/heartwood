@@ -374,6 +374,31 @@ if (authorizedKeys.size > 0) {
   console.log(`  Auto-approve: ${[...authorizedKeys].map((k) => k.slice(0, 12) + '...').join(', ')}`)
 }
 
+// --- 5b. Connect-slot secret matching ---
+
+const slotsPath = `${DATA_DIR}/slots.json`
+
+/** Check if a secret matches a pre-authorised connect slot. */
+function matchSlotSecret(secret) {
+  const slots = loadJson(slotsPath, {})
+  if (typeof secret !== 'string' || !secret) return null
+  const slot = slots[secret]
+  if (!slot) return null
+  return { label: slot.label ?? 'unknown' }
+}
+
+/** Record which pubkey connected via this slot. Secret persists for reuse. */
+function recordSlotClient(secret, clientPk) {
+  const slots = loadJson(slotsPath, {})
+  if (slots[secret]) {
+    if (!Array.isArray(slots[secret].clients)) slots[secret].clients = []
+    if (!slots[secret].clients.includes(clientPk)) {
+      slots[secret].clients.push(clientPk)
+    }
+    saveJson(slotsPath, slots)
+  }
+}
+
 // --- 6. Request handler ---
 
 async function handleRequest(event) {
@@ -450,9 +475,23 @@ async function handleRequest(event) {
   }
 
   switch (request.method) {
-    case 'connect':
+    case 'connect': {
       if (!isApproved(clientPk, approvedClients)) {
-        if (tryAutoApprove(clientPk, authorizedKeys, approvedClients)) {
+        // Check for connect-slot secret (params: [pubkey, secret?])
+        const connectSecret = Array.isArray(request.params) ? request.params[1] : undefined
+        const slotMatch = connectSecret ? matchSlotSecret(connectSecret) : null
+
+        if (slotMatch) {
+          // Secret matches a pre-authorised slot — auto-approve with the slot label.
+          approvedClients[clientPk] = {
+            approvedAt: new Date().toISOString(),
+            label: slotMatch.label,
+          }
+          saveJson(clientsPath, approvedClients)
+          // Record which client connected via this slot (secret persists for reuse).
+          recordSlotClient(connectSecret, clientPk)
+          console.log(`Slot-approved client ${clientPk.slice(0, 12)}... as "${slotMatch.label}"`)
+        } else if (tryAutoApprove(clientPk, authorizedKeys, approvedClients)) {
           saveJson(clientsPath, approvedClients)
           console.log(`Auto-approved authorized client ${clientPk.slice(0, 12)}...`)
         } else {
@@ -464,6 +503,7 @@ async function handleRequest(event) {
       }
       result = 'ack'
       break
+    }
 
     case 'ping':
       result = 'pong'
