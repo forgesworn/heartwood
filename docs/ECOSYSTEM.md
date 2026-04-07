@@ -5,28 +5,39 @@ Your keys never leave the device.
 The ForgeSworn identity stack is a set of open source tools that move Nostr key management off your laptop and onto dedicated hardware. One mnemonic seed generates unlimited unlinkable identities, signed on a device you control, accessible from any browser through standard APIs.
 
 ```mermaid
-graph LR
-    subgraph Browser
+graph TB
+    subgraph External["External"]
         WA["Any Nostr App"]
+        Relay["Nostr Relays"]
+    end
+
+    subgraph ClientLayer["Client Tools"]
         Bark["Bark Extension"]
         Sapwood["Sapwood Manager"]
     end
 
-    Relay["Nostr Relays"]
-
-    subgraph Hardware
+    subgraph DeviceLayer["Signing Device"]
         HW["Heartwood<br/>Raspberry Pi Zero 2 W"]
         ESP["ESP32 HSM<br/>(optional)"]
     end
 
-    NT["nsec-tree<br/>(crypto library)"]
+    subgraph CryptoLayer["Crypto Foundation"]
+        NT["nsec-tree<br/>(key derivation)"]
+    end
 
     WA -->|"window.nostr"| Bark
     Bark -->|"NIP-46"| Relay
     Relay -->|"NIP-46"| HW
+    Sapwood -->|"Web Serial / HTTP"| HW
     HW <-->|"Serial frames"| ESP
     HW -.->|"key derivation"| NT
-    Sapwood -->|"Web Serial / HTTP"| HW
+
+    style Bark fill:#3b82f6,color:#fff
+    style Sapwood fill:#3b82f6,color:#fff
+    style HW fill:#f59e0b,color:#000
+    style ESP fill:#ef4444,color:#fff
+    style NT fill:#1e293b,color:#e2e8f0
+    style Relay fill:#8b5cf6,color:#fff
 ```
 
 **Bark** is a browser extension that provides the standard `window.nostr` API (NIP-07). It holds no keys. Every signing request is forwarded over NIP-46 to your Heartwood device.
@@ -141,6 +152,14 @@ graph TB
     MEM -->|"Sign events"| SIG["Signatures out"]
     MEM -->|"Lock / shutdown"| Z["Zeroised"]
     EF -.->|"On unlock"| MEM
+
+    style M fill:#1e293b,color:#e2e8f0
+    style TR fill:#1e293b,color:#e2e8f0
+    style EF fill:#f59e0b,color:#000
+    style PIN fill:#3b82f6,color:#fff
+    style MEM fill:#ef4444,color:#fff
+    style SIG fill:#16c79a,color:#000
+    style Z fill:#ef4444,color:#fff
 ```
 
 All secrets in memory are wrapped in zeroising containers and overwritten on lock or shutdown.
@@ -155,6 +174,12 @@ graph TB
     HW["Heartwood on RPi"] -->|"Serial frame"| ESP
     ESP -->|"Signs locally"| SIG["Signature returned to RPi"]
     BTN["Physical button"] -.->|"Required for"| PROV["Provision / Reset / OTA"]
+
+    style M fill:#1e293b,color:#e2e8f0
+    style ESP fill:#ef4444,color:#fff
+    style HW fill:#f59e0b,color:#000
+    style SIG fill:#16c79a,color:#000
+    style BTN fill:#ef4444,color:#fff
 ```
 
 Compromising the Pi in HSM mode yields zero key material. The ESP32 requires a physical button press for all destructive operations (provisioning, factory reset, firmware update).
@@ -174,6 +199,14 @@ graph TB
     P1 --> G1["Group: family-chat"]
     P1 --> G2["Group: close-friends"]
     P2 --> G3["Group: company:acme"]
+
+    style SEED fill:#ef4444,color:#fff
+    style P1 fill:#f59e0b,color:#000
+    style P2 fill:#f59e0b,color:#000
+    style P3 fill:#f59e0b,color:#000
+    style G1 fill:#3b82f6,color:#fff
+    style G2 fill:#3b82f6,color:#fff
+    style G3 fill:#3b82f6,color:#fff
 ```
 
 **Unlinkable by default.** No observer can prove two personas share a master without a linkage proof. Derivation is one-way (HMAC-SHA256), so compromising a child reveals nothing about the parent or siblings.
