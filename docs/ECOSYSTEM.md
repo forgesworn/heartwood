@@ -5,53 +5,77 @@ Your keys never leave the device.
 The ForgeSworn identity stack is a set of open source tools that move Nostr key management off your laptop and onto dedicated hardware. One mnemonic seed generates unlimited unlinkable identities, signed on a device you control, accessible from any browser through standard APIs.
 
 ```mermaid
-graph TB
-    subgraph External["External"]
-        WA["Any Nostr App"]
-        AG["Nostr Agents<br/>(bray, Amethyst, etc.)"]
-        Relay["Nostr Relays"]
+graph LR
+    subgraph Clients["NIP-46 Clients"]
+        Bark["Bark<br/>(browser extension)"]
+        AG["Any NIP-46 client<br/>(bray, Amethyst, ...)"]
     end
 
-    subgraph ClientLayer["Client Tools"]
-        Bark["Bark Extension"]
-        Sapwood["Sapwood Manager"]
-    end
+    Relay["Nostr Relays"]
 
-    subgraph DeviceLayer["Signing Device"]
-        HW["Heartwood<br/>Raspberry Pi Zero 2 W"]
-        ESP["ESP32 HSM<br/>(optional)"]
-    end
+    HW["Heartwood"]
 
-    subgraph CryptoLayer["Crypto Foundation"]
-        NT["nsec-tree<br/>(key derivation)"]
-    end
-
-    WA -->|"window.nostr"| Bark
-    Bark -->|"NIP-46"| Relay
-    AG -->|"NIP-46<br/>(bunker URI)"| Relay
+    Clients -->|"NIP-46<br/>(bunker URI)"| Relay
     Relay -->|"NIP-46"| HW
-    Sapwood -->|"Web Serial / HTTP"| HW
-    HW <-->|"Serial frames"| ESP
-    HW -.->|"key derivation"| NT
+
+    Sapwood["Sapwood"] -.->|"Web Serial / HTTP"| HW
 
     style Bark fill:#3b82f6,color:#fff
-    style Sapwood fill:#3b82f6,color:#fff
     style AG fill:#3b82f6,color:#fff
-    style HW fill:#f59e0b,color:#000
-    style ESP fill:#ef4444,color:#fff
-    style NT fill:#1e293b,color:#e2e8f0
     style Relay fill:#8b5cf6,color:#fff
+    style HW fill:#f59e0b,color:#000
+    style Sapwood fill:#3b82f6,color:#fff
 ```
 
-**Bark** is a browser extension that provides the standard `window.nostr` API (NIP-07). It holds no keys. Every signing request is forwarded over NIP-46 to your Heartwood device. Bark is one way in -- any NIP-46 client (bray, Amethyst, or any agent with a bunker URI) can connect directly to Heartwood via relay without Bark.
+Any NIP-46 client can connect to Heartwood via a bunker URI. Bark provides `window.nostr` for browser apps. Agents like bray connect directly. The client doesn't need to know what's behind the bunker URI.
 
-**Heartwood** is a dedicated signing appliance running on a Raspberry Pi Zero 2 W. It stores your master secret (encrypted at rest with AES-256-GCM + Argon2id), derives child identities using nsec-tree's HMAC-SHA256 scheme, and signs events with BIP-340 Schnorr. Accessible over Tor.
+**Heartwood** is a signing appliance. It stores your master secret, derives child identities via nsec-tree, and signs events with BIP-340 Schnorr. Three deployment tiers from the same codebase:
 
-**Sapwood** is a browser-based management UI for provisioning, policy management, and firmware updates. Connects via Web Serial (USB) or HTTP (bridge on the Pi). 21 KB gzipped.
+```mermaid
+graph LR
+    subgraph Soft["Soft"]
+        S_PI["Pi standalone<br/>Argon2id keyfile"]
+    end
 
-**ESP32 HSM** is an optional hardware security module. In HSM mode, the Pi stores nothing and forwards signing requests to the ESP32 over serial. Provisioning and factory reset require a physical button press.
+    subgraph Hard["Hard"]
+        H_PI["Pi bridge<br/>(zero trust)"]
+        H_ESP["ESP32 HSM<br/>(master secrets)"]
+    end
+
+    subgraph Portable["Portable"]
+        P_ESP["ESP32 + battery<br/>(child key only)"]
+        P_BLE["BLE to phone"]
+    end
+
+    H_PI <-->|"USB serial"| H_ESP
+
+    style S_PI fill:#f59e0b,color:#000
+    style H_PI fill:#f59e0b,color:#000
+    style H_ESP fill:#ef4444,color:#fff
+    style P_ESP fill:#ef4444,color:#fff
+    style P_BLE fill:#3b82f6,color:#fff
+```
+
+| Tier | Key material | Signing | Attack surface |
+|------|-------------|---------|----------------|
+| **Soft** | Encrypted on Pi (Argon2id + XChaCha20-Poly1305) | Pi signs | Pi compromise = key at risk |
+| **Hard** | On ESP32 only, Pi is zero-trust | ESP32 signs, Pi relays ciphertext | Pi compromise = no key access |
+| **Portable** | Child key on battery ESP32 | BLE to phone, short range | Loss = burn that branch, master untouched |
+
+**Sapwood** is a browser-based management UI. Provisions master identities, manages TOFU client policies, uploads firmware, monitors logs. Connects via Web Serial (USB) or HTTP (bridge on the Pi). 21 KB gzipped.
 
 **nsec-tree** is the cryptographic foundation. A deterministic key derivation library that creates unlimited child identities from a single seed using HMAC-SHA256. Implemented in TypeScript (npm) and Rust (heartwood-core).
+
+## TOFU client approval
+
+When a new NIP-46 client connects to Heartwood for the first time, it isn't automatically trusted. The device holds a connection slot table with per-client policies:
+
+- **Auto-approve:** trusted clients sign without prompting
+- **Ask:** Sapwood shows an approval queue for out-of-policy requests
+- **Kind restrictions:** per-client allowlists for which event kinds can be signed
+- **Rate limiting:** 60 requests/minute per client
+
+First connection requires approval (TOFU). After that, the client's pubkey is remembered and policies apply. Revoking a client removes it from the slot table.
 
 ---
 
@@ -154,9 +178,9 @@ The nsec is never included in any response. Only signatures and public keys leav
 
 The most important question for any signing architecture: where is the key material?
 
-### Software mode (Raspberry Pi only)
+### Soft tier (Pi standalone)
 
-The master secret is encrypted at rest on the Pi's SD card. It's only decrypted into memory when the device is unlocked with a PIN.
+The master secret is encrypted at rest on the Pi's SD card with Argon2id + XChaCha20-Poly1305. It's only decrypted into memory when the device is unlocked via Sapwood.
 
 ```mermaid
 graph TB
@@ -178,9 +202,9 @@ graph TB
 
 All secrets in memory are wrapped in zeroising containers and overwritten on lock or shutdown.
 
-### HSM mode (Raspberry Pi + ESP32)
+### Hard tier (Pi + ESP32 HSM)
 
-The Pi stores nothing. The ESP32 holds the master secret in its non-volatile storage. The Pi acts as a network proxy, forwarding NIP-46 requests to the ESP32 over serial.
+The Pi stores nothing and only sees NIP-44 ciphertext. The ESP32 holds the master secret in NVS, handles all cryptography, and requires a physical button press to sign. Even a fully compromised Pi cannot extract keys or forge signatures.
 
 ```mermaid
 graph TB
@@ -196,7 +220,9 @@ graph TB
     style BTN fill:#ef4444,color:#fff
 ```
 
-Compromising the Pi in HSM mode yields zero key material. The ESP32 requires a physical button press for all destructive operations (provisioning, factory reset, firmware update).
+### Portable tier (battery ESP32 + BLE, roadmap)
+
+A battery-powered ESP32 holds a **child key** derived from the home HSM (`purpose="device/mobile"`). Only BLE enabled for short-range phone signing. If lost or compromised, burn that branch on the HSM and derive a new child at the next index. The master and all other branches are untouched.
 
 ---
 
