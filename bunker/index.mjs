@@ -16,6 +16,7 @@ import { decode as nip19decode } from 'nostr-tools/nip19'
 import { SimplePool } from 'nostr-tools/pool'
 import WebSocket from 'ws'
 import { fromNsec } from 'nsec-tree/core'
+import { lsagSign } from '@forgesworn/ring-sig'
 import { fromMnemonic } from 'nsec-tree/mnemonic'
 import { derivePersona } from 'nsec-tree/persona'
 import { bytesToHex } from 'nostr-tools/utils'
@@ -658,6 +659,51 @@ async function handleRequest(event) {
       saveJson(personaConfigPath, { activePubkey: targetPubkey })
       console.log(`Switched to persona "${target.name}" (${targetPubkey.slice(0, 12)}...)`)
       result = JSON.stringify({ switched: true, pubkey: targetPubkey, name: target.name })
+      break
+    }
+
+    case 'heartwood_lsag_sign': {
+      // LSAG ring signature — the private key never leaves the device.
+      // params: [JSON string of { ring: string[], message: string, signerIndex: number }]
+      if (!Array.isArray(request.params) || typeof request.params[0] !== 'string') {
+        error = 'heartwood_lsag_sign: missing params JSON'
+        break
+      }
+      let lsagParams
+      try {
+        lsagParams = JSON.parse(request.params[0])
+      } catch {
+        error = 'heartwood_lsag_sign: invalid JSON'
+        break
+      }
+      const { ring, message, signerIndex, electionId, domain } = lsagParams
+      if (!Array.isArray(ring) || typeof message !== 'string' || typeof signerIndex !== 'number' || typeof electionId !== 'string') {
+        error = 'heartwood_lsag_sign: requires { ring: string[], message: string, signerIndex: number, electionId: string, domain?: string }'
+        break
+      }
+      if (ring.length < 2 || ring.length > 64) {
+        error = 'heartwood_lsag_sign: ring must have 2-64 members'
+        break
+      }
+      if (signerIndex < 0 || signerIndex >= ring.length) {
+        error = 'heartwood_lsag_sign: signerIndex out of range'
+        break
+      }
+      const lsagActive = getActiveSigningKey()
+      try {
+        const skHex = typeof lsagActive.sk === 'string' ? lsagActive.sk : bytesToHex(lsagActive.sk)
+        const sig = domain
+          ? lsagSign(message, ring, signerIndex, skHex, electionId, domain)
+          : lsagSign(message, ring, signerIndex, skHex, electionId)
+        result = JSON.stringify({
+          signature: sig,
+          keyImage: sig.keyImage,
+          publicKey: lsagActive.pk,
+        })
+        console.log(`LSAG signed: ring=${ring.length}, index=${signerIndex}, pubkey=${lsagActive.pk.slice(0, 12)}...`)
+      } finally {
+        releaseKey(lsagActive)
+      }
       break
     }
 
