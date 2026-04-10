@@ -1,13 +1,33 @@
 // crates/heartwood-core/src/persona.rs
 use crate::derive::{derive, derive_from_identity};
 use crate::types::{HeartwoodError, Identity, Persona, TreeRoot};
+use crate::validate::contains_control_char;
 
-/// Validate that a persona name does not contain characters that would
-/// break the pipe-delimited attestation format.
+/// Validate that a persona name is a sane string for interpolation into a
+/// derivation purpose and for cross-implementation storage.
+///
+/// Rejects: empty, whitespace-only, `|` (the linkage-proof attestation
+/// delimiter), and C0/DEL control characters. Matches the TypeScript
+/// `validatePersonaName` helper tightened in nsec-tree 1.4.4.
 fn validate_persona_name(name: &str) -> Result<(), HeartwoodError> {
+    if name.is_empty() {
+        return Err(HeartwoodError::InvalidPersonaName(
+            "persona name must not be empty".into(),
+        ));
+    }
+    if name.trim().is_empty() {
+        return Err(HeartwoodError::InvalidPersonaName(
+            "persona name must not be whitespace-only".into(),
+        ));
+    }
     if name.contains('|') {
         return Err(HeartwoodError::InvalidPersonaName(
             "persona name must not contain '|' (attestation delimiter)".into(),
+        ));
+    }
+    if contains_control_char(name) {
+        return Err(HeartwoodError::InvalidPersonaName(
+            "persona name must not contain control characters".into(),
         ));
     }
     Ok(())

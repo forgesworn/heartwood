@@ -54,3 +54,25 @@ fn persona_name_with_pipe_rejected() {
         Ok(_) => panic!("expected pipe in persona name to be rejected"),
     }
 }
+
+#[test]
+fn persona_name_empty_rejected() {
+    let root = root_01();
+    assert!(derive_persona(&root, "", None).is_err());
+}
+
+#[test]
+fn persona_name_whitespace_only_rejected() {
+    let root = root_01();
+    assert!(derive_persona(&root, "   ", None).is_err());
+    assert!(derive_persona(&root, "\t\n", None).is_err());
+}
+
+#[test]
+fn persona_name_control_chars_rejected() {
+    let root = root_01();
+    assert!(derive_persona(&root, "bad\nname", None).is_err());
+    assert!(derive_persona(&root, "bad\tname", None).is_err());
+    assert!(derive_persona(&root, "bad\x01name", None).is_err());
+    assert!(derive_persona(&root, "bad\x7fname", None).is_err());
+}
