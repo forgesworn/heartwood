@@ -1,6 +1,7 @@
 # Heartwood
 
 [![CI](https://github.com/forgesworn/heartwood/actions/workflows/ci.yml/badge.svg)](https://github.com/forgesworn/heartwood/actions/workflows/ci.yml)
+[![GitHub Sponsors](https://img.shields.io/github/sponsors/TheCryptoDonkey?logo=githubsponsors&color=ea4aaa&label=Sponsor)](https://github.com/sponsors/TheCryptoDonkey)
 
 Open-source Nostr signing software built on [nsec-tree](https://github.com/forgesworn/nsec-tree). Runs on a Raspberry Pi. Holds your master identity in hardware, derives unlimited unlinkable personas, signs events via NIP-46, reachable from anywhere via Tor. Private keys never leave the device.
 
