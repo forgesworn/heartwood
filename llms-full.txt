@@ -677,7 +677,7 @@ NoNewPrivileges=true
 
 ## Ecosystem
 
-- [nsec-tree](https://github.com/forgesworn/nsec-tree) — TypeScript reference implementation (136 tests, frozen vectors)
+- [nsec-tree](https://github.com/forgesworn/nsec-tree) — TypeScript reference implementation (168 tests, frozen vectors)
 - [shamir-words](https://github.com/forgesworn/shamir-words) — Mnemonic threshold backup splitting
 - [canary-kit](https://github.com/forgesworn/canary-kit) — Dead man's switch (pairs with Heartwood duress persona)
 - [bray](https://github.com/forgesworn/bray) — Nostr MCP server (AI agents sign through Heartwood)

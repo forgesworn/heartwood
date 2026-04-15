@@ -197,6 +197,6 @@ cross build --release --target aarch64-unknown-linux-gnu -p heartwood-device
 - **AES-256-GCM encryption at rest** — your nsec is encrypted with a key derived from your PIN via Argon2id. The PIN is never stored.
 - **The nsec never leaves the device** — only signatures and public keys are sent over relays.
 - **Systemd hardening** — both services run with `ProtectSystem=strict`, `NoNewPrivileges=true`, `PrivateTmp=true`, and restricted capabilities.
-- **Tor by default** — no port forwarding, no clearnet exposure, no IP address leaked.
+- **Reachable over Tor by default** — hidden service configured during install. No port forwarding needed, no IP address exposed to connecting clients.
 - **Per-client kind restrictions** — control what each paired app can sign.
 - **Device password** — protects the web UI with Argon2id-hashed HTTP Basic Auth.

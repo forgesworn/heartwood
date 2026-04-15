@@ -98,9 +98,9 @@ Any NIP-46 client can connect to Heartwood. The connection string is a standard 
 nostrconnect://{signer-pubkey}?relay=wss://{relay}&secret={secret}&perms={kinds}
 ```
 
-Heartwood routes all NIP-46 traffic through Tor. Connect via the `.onion` address as the relay transport.
+The Heartwood web UI is served as a Tor hidden service. NIP-46 traffic flows through the Nostr relay specified in the `nostrconnect://` URI; choosing a Tor-accessible relay keeps the signer transport off clearnet.
 
-**Compatible clients:** Damus (iOS), Primal (iOS/Android/web), Snort, Coracle, Amethyst (Android), NDK-based apps.
+**Compatible clients:** Tested with Nostr Connect clients across desktop and mobile (Damus, Primal, Snort, Coracle, Amethyst, and NDK-based apps).
 
 ## Security Properties
 
@@ -121,7 +121,7 @@ Heartwood routes all NIP-46 traffic through Tor. Connect via the `.onion` addres
 - AES-256-GCM encrypted storage with Argon2id key derivation from device PIN
 - Per-client rate limiting in both Rust server (60 req/min) and JS bunker (30 req/min)
 - Lock middleware: 423 response on most endpoints until PIN unlock
-- 87 tests including frozen protocol vectors cross-validated against TypeScript reference implementation
+- 137 tests including frozen protocol vectors cross-validated against TypeScript reference implementation
 
 ## Competitors
 

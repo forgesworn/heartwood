@@ -8,8 +8,8 @@ Open-source Nostr signing software built on [nsec-tree](https://github.com/forge
 ## What it does
 
 - **One mnemonic, all identities.** 12 words recover everything.
-- **NIP-46 remote signing.** Works with every Nostr client that supports Nostr Connect.
-- **Tor by default.** No clearnet exposure. No router configuration.
+- **NIP-46 remote signing.** Compatible with Nostr Connect clients across desktop and mobile.
+- **Reachable over Tor by default.** Hidden service configured during install. No port forwarding, no router configuration, no IP address exposed to clients.
 - **Per-client permissions.** Control which event kinds each paired app can sign.
 - **Unlinkable personas.** Derive separate identities for work, personal, anon. Nobody can link them unless you prove it.
 
@@ -18,7 +18,7 @@ Open-source Nostr signing software built on [nsec-tree](https://github.com/forge
 | | Heartwood | nsecBunker | Amber | nsec.app | LNbits NSD |
 |---|:-:|:-:|:-:|:-:|:-:|
 | Multi-identity from one seed | Yes | No | No | No | No |
-| Tor by default | Yes | No | No | No | No |
+| Inbound Tor hidden service by default | Yes | No | No | No | No |
 | Per-client permissions | Yes | Yes | No | No | No |
 | Works from any device/OS | Yes | Yes | Android only | Browser only | Desktop only |
 | No server infrastructure | Yes | No (VPS) | Yes | Yes | Yes |
