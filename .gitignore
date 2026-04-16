@@ -6,6 +6,9 @@ Cargo.lock
 docs/specs/
 docs/plans/
 
+# AI assistant config
+CLAUDE.md
+
 # Node dependencies
 bunker/node_modules/
 
