@@ -3,7 +3,7 @@
 [![CI](https://github.com/forgesworn/heartwood/actions/workflows/ci.yml/badge.svg)](https://github.com/forgesworn/heartwood/actions/workflows/ci.yml)
 [![GitHub Sponsors](https://img.shields.io/github/sponsors/TheCryptoDonkey?logo=githubsponsors&color=ea4aaa&label=Sponsor)](https://github.com/sponsors/TheCryptoDonkey)
 
-Open-source Nostr signing software built on [nsec-tree](https://github.com/forgesworn/nsec-tree). Runs on a Raspberry Pi. Holds your master identity in hardware, derives unlimited unlinkable personas, signs events via NIP-46, reachable from anywhere via Tor. Private keys never leave the device.
+Open-source Nostr signing software built on [nsec-tree](https://github.com/forgesworn/nsec-tree). Runs on any cheap ARM Linux board: Raspberry Pi Zero 2 W, Orange Pi Zero, Rock Pi S, Banana Pi M2 Zero, or a repurposed Android phone running postmarketOS. Holds your master identity on a dedicated device, derives unlimited unlinkable personas, signs events via NIP-46, reachable from anywhere via Tor. Private keys never leave the device.
 
 ## What it does
 
@@ -26,20 +26,24 @@ Open-source Nostr signing software built on [nsec-tree](https://github.com/forge
 
 ## Hardware
 
-Runs on any Raspberry Pi (Pi 4 for development, Pi Zero 2 W for dedicated deployment).
+Minimum bar: any ARMv7 or aarch64 Linux board with 256MB+ RAM and ~200MB storage. No soldering, no custom silicon, just an SD card to flash and a power supply.
 
-| Item | Price |
-|------|-------|
-| Raspberry Pi Zero 2 W | ~GBP 15 |
-| Micro SD card (8GB+) | ~GBP 4 |
-| USB-C power supply | ~GBP 5 |
-| **Total** | **~GBP 24** |
+Two reference targets:
 
-No soldering. No custom hardware. Flash an SD card and go.
+| | Raspberry Pi Zero 2 W | Orange Pi Zero |
+|---|:-:|:-:|
+| Architecture | aarch64 (64-bit) | ARMv7 (32-bit) |
+| RAM | 512MB | 256-512MB |
+| Price | ~GBP 15 | ~GBP 25 |
+| OS | Raspberry Pi OS Lite (64-bit) | Armbian |
+
+Other working boards: Banana Pi M2 Zero, Rock Pi S, Le Potato, or any ARMv7/aarch64 Linux board with 256MB+ RAM. Old Android phones running postmarketOS also work.
+
+You'll also need a micro SD card (8GB+) and a power supply for whatever board you pick. Total for a Pi Zero 2 W setup: ~GBP 24.
 
 ## Quick start
 
-On a Raspberry Pi running Raspberry Pi OS Lite (64-bit):
+On an ARM Linux board (Raspberry Pi OS Lite, Armbian, or other Debian-based ARM Linux — Pi is the production-verified path today, Armbian and postmarketOS support is in active development):
 
 ```bash
 curl -sL https://github.com/forgesworn/heartwood/releases/latest/download/install.sh | sudo bash
@@ -71,7 +75,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full internal architecture with d
 ```
 heartwood-core     Pure crypto: nsec-tree derivation, signing, proofs, personas
 heartwood-nip46    NIP-46 protocol: method dispatch, permissions, sessions
-heartwood-device   Device binary: Tor, web UI, storage, OLED
+heartwood-device   Device binary: Tor, web UI, storage, optional OLED
 ```
 
 ## Ecosystem
