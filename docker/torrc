@@ -1,0 +1,16 @@
+# Heartwood container Tor configuration.
+# Hidden service is rooted in the heartwood data volume so the .onion address
+# survives container recreation as long as the volume persists.
+
+DataDirectory /var/lib/tor/heartwood/data
+RunAsDaemon 0
+Log notice stdout
+
+# Inbound hidden service exposing the web UI / NIP-46 endpoint.
+HiddenServiceDir /var/lib/tor/heartwood/hs/
+HiddenServicePort 3000 127.0.0.1:3000
+
+# SOCKS port for outbound relay traffic. The bunker sidecar can route relay
+# WebSocket connections through this when HEARTWOOD_OUTBOUND_TOR=1, so the
+# device's IP doesn't leak to relay operators (this wiring is in progress).
+SocksPort 127.0.0.1:9050
