@@ -182,7 +182,7 @@ cargo build --release -p heartwood-device
 cd bunker && npm install && cd ..
 
 # Run the setup script
-cd pi && sudo bash setup.sh
+cd boards/pi && sudo bash setup.sh
 ```
 
 Cross-compile for Pi from another machine:

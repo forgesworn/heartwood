@@ -53,7 +53,7 @@ Build from source instead:
 git clone https://github.com/forgesworn/heartwood && cd heartwood
 cargo build --release -p heartwood-device
 cd bunker && npm install && cd ..
-cd pi && sudo bash setup.sh
+cd boards/pi && sudo bash setup.sh
 ```
 
 ## Development

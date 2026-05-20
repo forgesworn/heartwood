@@ -59,7 +59,7 @@ cross build --release --target aarch64-unknown-linux-gnu -p heartwood-device
 crates/heartwood-core/     Pure crypto — no I/O, no async
 crates/heartwood-nip46/    NIP-46 protocol types — no I/O
 crates/heartwood-device/   Binary: HTTP server, Tor, OLED, storage
-pi/                        Raspberry Pi setup scripts
+boards/pi/                 Raspberry Pi setup scripts (one of multiple supported ARM boards)
 web/                       Web UI (served by heartwood-device)
 ```
 

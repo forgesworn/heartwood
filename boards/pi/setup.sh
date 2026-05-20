@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# pi/setup.sh -- Heartwood Pi setup script (multi-instance)
+# boards/pi/setup.sh -- Heartwood Pi setup script (multi-instance)
 # Run on a fresh Raspberry Pi OS Lite installation.
 #
 # Usage:
