@@ -22,10 +22,26 @@ jobs:
             os: ubuntu-latest
             binary: heartwood-device
             asset: heartwood-aarch64-linux
+            gcc_pkg: gcc-aarch64-linux-gnu
+            linker: aarch64-linux-gnu-gcc
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             binary: heartwood-device
             asset: heartwood-x86_64-linux
+            gcc_pkg: ""
+            linker: ""
+          - target: armv7-unknown-linux-gnueabihf
+            os: ubuntu-latest
+            binary: heartwood-device
+            asset: heartwood-armv7-linux
+            gcc_pkg: gcc-arm-linux-gnueabihf
+            linker: arm-linux-gnueabihf-gcc
+          - target: riscv64gc-unknown-linux-gnu
+            os: ubuntu-latest
+            binary: heartwood-device
+            asset: heartwood-riscv64-linux
+            gcc_pkg: gcc-riscv64-linux-gnu
+            linker: riscv64-linux-gnu-gcc
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -35,17 +51,17 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Install cross-compilation tools
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        if: matrix.gcc_pkg != ''
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
+          sudo apt-get install -y ${{ matrix.gcc_pkg }} libudev-dev pkg-config
 
-      - name: Set linker for aarch64
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
+      - name: Configure linker
+        if: matrix.linker != ''
         run: |
           mkdir -p .cargo
-          echo '[target.aarch64-unknown-linux-gnu]' >> .cargo/config.toml
-          echo 'linker = "aarch64-linux-gnu-gcc"' >> .cargo/config.toml
+          echo '[target.${{ matrix.target }}]' >> .cargo/config.toml
+          echo 'linker = "${{ matrix.linker }}"' >> .cargo/config.toml
 
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
@@ -113,7 +129,7 @@ jobs:
         run: |
           cat > artifacts/install.sh << 'SCRIPT'
           #!/usr/bin/env bash
-          # Heartwood one-liner installer for Raspberry Pi
+          # Heartwood one-liner installer for ARM / x86_64 / RISC-V Linux
           set -euo pipefail
 
           echo "=== Installing Heartwood ==="
@@ -121,8 +137,10 @@ jobs:
           # Detect architecture
           ARCH=$(uname -m)
           case "$ARCH" in
-            aarch64) ASSET="heartwood-aarch64-linux" ;;
-            x86_64)  ASSET="heartwood-x86_64-linux" ;;
+            aarch64)         ASSET="heartwood-aarch64-linux" ;;
+            x86_64)          ASSET="heartwood-x86_64-linux" ;;
+            armv7l|armv7)    ASSET="heartwood-armv7-linux" ;;
+            riscv64)         ASSET="heartwood-riscv64-linux" ;;
             *) echo "Unsupported architecture: $ARCH"; exit 1 ;;
           esac
 
@@ -320,5 +338,7 @@ jobs:
           files: |
             artifacts/heartwood-aarch64-linux/heartwood-aarch64-linux
             artifacts/heartwood-x86_64-linux/heartwood-x86_64-linux
+            artifacts/heartwood-armv7-linux/heartwood-armv7-linux
+            artifacts/heartwood-riscv64-linux/heartwood-riscv64-linux
             artifacts/SHA256SUMS
             artifacts/install.sh
