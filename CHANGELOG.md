@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.0] - 2026-06-21
+
+### Added
+- **Encryption at rest** — master secret sealed with AES-256-GCM and an Argon2id-derived key; versioned KDF params; intermediate secret material zeroised
+- **Boot PIN** — PIN management with brute-force protection and alphanumeric support
+- **Mnemonic UX** — hardware-wallet-style 24-word BIP-39 generation and recovery flow (`/api/generate-mnemonic`, `/api/wordlist`)
+- **Multi-instance bunker** — identity tree with persistent per-client keys, systemd template units, multi-instance `setup.sh`; `HEARTWOOD_DATA_DIR` / `--authorized-keys` support
+- **Connection slots** — reusable secrets for named client pairing; `/api/derive-client-key`, `/api/client-keys`, `/api/pair` (Bark pairing)
+- **ESP32 HSM mode** — web setup flow integration, PIN management, and auto-detected serial port
+- **`heartwood_lsag_sign`** NIP-46 method (linkable ring signatures); NIP-44 v2 and NIP-04 encrypt/decrypt
+- **Multi-architecture support** — `pi/`→`boards/pi/` rename, multi-arch container image with CI verification, armv7 and riscv64 release targets, ARM-general README
+- Relay-mediated management design (kind 24134) for WiFi-standalone signers
+
+### Changed
+- Crates renamed for crates.io publishing (`nsec-tree-rs`, `nip46-signer`); auto-published on release
+- nsec-tree bumped to 1.4.4 (proof-layer hardening)
+- MIT licence; documentation, ecosystem overview, and architecture diagrams reworked
+
+### Fixed
+- Multiple security-audit rounds (critical/high/medium findings): input validation, XSS prevention, PIN/password hardening, infrastructure hardening, secret zeroisation
+- KDF param versioning to prevent silent unlock failures; resume unlocked state from cached payload on restart
+
 ## [0.3.0] - 2026-04-01
 
 ### Added
