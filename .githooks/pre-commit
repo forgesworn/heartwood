@@ -1,0 +1,40 @@
+#!/bin/sh
+# Check-in guard: this project is authored as TheCryptoDonkey only.
+#
+# The dbowles identity is banned outright — it must never be a commit author or
+# committer, and the string must never be added to tracked files. (This .githooks
+# directory is excluded from the content scan so the guard can name what it bans.)
+#
+# This repo has no npm "prepare" step, so wire the hook once after cloning:
+#     git config core.hooksPath .githooks
+# Bypass is possible with --no-verify, so don't.
+
+banned='dbowles'
+fail=0
+
+# 1. Commit identity must not be the banned account.
+ident="$(git var GIT_AUTHOR_IDENT 2>/dev/null) $(git var GIT_COMMITTER_IDENT 2>/dev/null)"
+case "$ident" in
+  *"$banned"*)
+    echo "✗ commit identity contains '$banned'. Set the git user to TheCryptoDonkey:"
+    echo "    git config user.name  TheCryptoDonkey"
+    echo "    git config user.email TheCryptoDonkey@users.noreply.github.com"
+    fail=1
+    ;;
+esac
+
+# 2. Staged ADDED lines must not introduce the banned word (case-insensitive).
+#    The hooks dir itself is excluded — it legitimately names the banned word.
+hits="$(git diff --cached --diff-filter=ACM -- . ':(exclude).githooks/' \
+  | grep -E '^\+' | grep -vE '^\+\+\+' | grep -i "$banned" || true)"
+if [ -n "$hits" ]; then
+  echo "✗ staged changes add the banned word '$banned':"
+  echo "$hits" | sed 's/^/    /'
+  fail=1
+fi
+
+if [ "$fail" -ne 0 ]; then
+  echo ""
+  echo "Commit blocked by .githooks/pre-commit (the '$banned' identity is banned)."
+  exit 1
+fi
