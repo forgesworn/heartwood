@@ -3,13 +3,13 @@
 [![CI](https://github.com/forgesworn/heartwood/actions/workflows/ci.yml/badge.svg)](https://github.com/forgesworn/heartwood/actions/workflows/ci.yml)
 [![GitHub Sponsors](https://img.shields.io/github/sponsors/TheCryptoDonkey?logo=githubsponsors&color=ea4aaa&label=Sponsor)](https://github.com/sponsors/TheCryptoDonkey)
 
-Open-source Nostr signing software built on [nsec-tree](https://github.com/forgesworn/nsec-tree). Runs on any cheap ARM Linux board: Raspberry Pi Zero 2 W, Orange Pi Zero, Rock Pi S, Banana Pi M2 Zero, or a repurposed Android phone running postmarketOS. Holds your master identity on a dedicated device, derives unlimited unlinkable personas, signs events via NIP-46, reachable from anywhere via Tor. Private keys never leave the device.
+Open-source Nostr signing software built on [nsec-tree](https://github.com/forgesworn/nsec-tree). Runs on any cheap ARM Linux board: Raspberry Pi Zero 2 W, Orange Pi Zero, Rock Pi S, Banana Pi M2 Zero, or a repurposed Android phone running postmarketOS. Holds your master identity on a dedicated device, derives unlimited unlinkable personas, signs events via NIP-46 over Nostr relays, reachable from anywhere with no open ports. Private keys never leave the device.
 
 ## What it does
 
 - **One mnemonic, all identities.** 12 words recover everything.
 - **NIP-46 remote signing.** Compatible with Nostr Connect clients across desktop and mobile.
-- **Reachable over Tor by default.** Hidden service configured during install. No port forwarding, no router configuration, no IP address exposed to clients.
+- **Reachable from anywhere, no open ports.** NIP-46 is relay-mediated: the signer connects out to Nostr relays, so there's no port forwarding, no router configuration, and your IP is never exposed to client apps. An optional Tor hidden service for the web management UI is available (off by default).
 - **Per-client permissions.** Control which event kinds each paired app can sign.
 - **Unlinkable personas.** Derive separate identities for work, personal, anon. Nobody can link them unless you prove it.
 
@@ -18,7 +18,7 @@ Open-source Nostr signing software built on [nsec-tree](https://github.com/forge
 | | Heartwood | nsecBunker | Amber | nsec.app | LNbits NSD |
 |---|:-:|:-:|:-:|:-:|:-:|
 | Multi-identity from one seed | Yes | No | No | No | No |
-| Inbound Tor hidden service by default | Yes | No | No | No | No |
+| Relay-mediated, no inbound listener | Yes | Yes | Yes | Yes | No |
 | Per-client permissions | Yes | Yes | No | No | No |
 | Works from any device/OS | Yes | Yes | Android only | Browser only | Desktop only |
 | No server infrastructure | Yes | No (VPS) | Yes | Yes | Yes |
@@ -75,7 +75,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full internal architecture with d
 ```
 heartwood-core     Pure crypto: nsec-tree derivation, signing, proofs, personas
 heartwood-nip46    NIP-46 protocol: method dispatch, permissions, sessions
-heartwood-device   Device binary: Tor, web UI, storage, optional OLED
+heartwood-device   Device binary: web UI, storage, optional OLED, optional Tor (web UI)
 ```
 
 ## Ecosystem

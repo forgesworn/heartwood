@@ -2,11 +2,11 @@
 
 > **This component is part of the [ForgeSworn Identity Stack](docs/ECOSYSTEM.md).** See the ecosystem overview for how it connects to the other components.
 
-Heartwood is a dedicated Nostr signing appliance. It runs on a Raspberry Pi Zero 2 W, stores your master secret encrypted at rest, derives child identities via nsec-tree, and signs events over NIP-46. Accessible remotely via Tor hidden service.
+Heartwood is a dedicated Nostr signing appliance. It runs on a Raspberry Pi Zero 2 W, stores your master secret encrypted at rest, derives child identities via nsec-tree, and signs events over NIP-46 via Nostr relays. The web management UI is optionally reachable via a Tor hidden service (off by default).
 
 ## Architecture overview
 
-The repo has two runtime components: a Rust binary (`heartwood-device`) and a Node.js sidecar (`bunker/`). The Rust side handles the web UI, storage, Tor, and OLED. The Node.js bunker sidecar connects to Nostr relays as a NIP-46 server, handling `connect` and `ping` itself and forwarding signing/derivation requests to the Rust crate library.
+The repo has two runtime components: a Rust binary (`heartwood-device`) and a Node.js sidecar (`bunker/`). The Rust side handles the web UI, storage, optional Tor (fronting the web UI), and OLED. The Node.js bunker sidecar connects to Nostr relays as a NIP-46 server, handling `connect` and `ping` itself and forwarding signing/derivation requests to the Rust crate library.
 
 ## Hexagonal architecture
 

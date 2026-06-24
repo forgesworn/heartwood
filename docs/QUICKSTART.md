@@ -99,9 +99,9 @@ Once approved, the client can request signatures. Your nsec never leaves the dev
 
 In the web UI, scroll down to **Device Password** and set one. This protects the web UI with HTTP Basic Auth — anyone on your network would need the password to access settings.
 
-## Step 8: Access from anywhere (Tor)
+## Step 8: Access the web UI from anywhere (optional Tor)
 
-If Tor is enabled (check the toggle in the web UI), you can access Heartwood from anywhere using your `.onion` address. The address is shown in the web UI with a copy button.
+If you enable Tor (toggle in the web UI), you can reach the web management UI from anywhere using your `.onion` address. The address is shown in the web UI with a copy button. Signing already works from anywhere — it runs over Nostr relays — so this is only for remote device management.
 
 This works from any network — VPN, coffee shop WiFi, your phone on mobile data. You need [Tor Browser](https://www.torproject.org/download/) or a Tor-capable client.
 
@@ -197,6 +197,6 @@ cross build --release --target aarch64-unknown-linux-gnu -p heartwood-device
 - **AES-256-GCM encryption at rest** — your nsec is encrypted with a key derived from your PIN via Argon2id. The PIN is never stored.
 - **The nsec never leaves the device** — only signatures and public keys are sent over relays.
 - **Systemd hardening** — both services run with `ProtectSystem=strict`, `NoNewPrivileges=true`, `PrivateTmp=true`, and restricted capabilities.
-- **Reachable over Tor by default** — hidden service configured during install. No port forwarding needed, no IP address exposed to connecting clients.
+- **Reachable from anywhere over Nostr relays** — NIP-46 is relay-mediated, so no port forwarding and no IP exposed to client apps. An optional Tor hidden service for the web UI is available (off by default).
 - **Per-client kind restrictions** — control what each paired app can sign.
 - **Device password** — protects the web UI with Argon2id-hashed HTTP Basic Auth.
