@@ -154,10 +154,8 @@ fn verify_proof_rejects_proof_with_pipe_in_purpose_field() {
     proof.purpose = Some("social|injected".to_string());
     // Also overwrite attestation so the literal strings match the fields —
     // this is the strongest adversary model for this attack.
-    proof.attestation = format!(
-        "nsec-tree:link|{}|{}|social|injected|0",
-        proof.master_pubkey, proof.child_pubkey
-    );
+    proof.attestation =
+        format!("nsec-tree:link|{}|{}|social|injected|0", proof.master_pubkey, proof.child_pubkey);
 
     assert!(!verify_proof(&proof).expect("verify must not error"));
 }
