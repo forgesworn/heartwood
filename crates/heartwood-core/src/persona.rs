@@ -11,9 +11,7 @@ use crate::validate::contains_control_char;
 /// `validatePersonaName` helper tightened in nsec-tree 1.4.4.
 fn validate_persona_name(name: &str) -> Result<(), HeartwoodError> {
     if name.is_empty() {
-        return Err(HeartwoodError::InvalidPersonaName(
-            "persona name must not be empty".into(),
-        ));
+        return Err(HeartwoodError::InvalidPersonaName("persona name must not be empty".into()));
     }
     if name.trim().is_empty() {
         return Err(HeartwoodError::InvalidPersonaName(
