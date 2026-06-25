@@ -6,7 +6,7 @@ Heartwood is a dedicated Nostr signing appliance. It runs on a Raspberry Pi Zero
 
 ## Architecture overview
 
-The repo has two runtime components: a Rust binary (`heartwood-device`) and a Node.js sidecar (`bunker/`). The Rust side handles the web UI, storage, optional Tor (fronting the web UI), and OLED. The Node.js bunker sidecar connects to Nostr relays as a NIP-46 server, handling `connect` and `ping` itself and forwarding signing/derivation requests to the Rust crate library.
+The repo has three runtime components: a Rust binary (`heartwood-device`), a Node.js sidecar (`bunker/`), and a Rust sidecar (`heartwood-bridge`). The Rust device binary handles the web UI, storage, optional Tor (fronting the web UI), and OLED. The Node.js bunker sidecar connects to Nostr relays as a NIP-46 server, handling `connect` and `ping` itself and forwarding signing/derivation requests to the Rust crate library — this is the **software-signing** path. The `heartwood-bridge` sidecar is its **HSM-mode** counterpart: it connects the relays to a USB-tethered signing device, pumping NIP-46 requests over serial and publishing the device's signed responses, while never holding key material itself. The bunker and the bridge are mutually exclusive by operational mode (see [the bridge design note](docs/2026-06-25-relay-serial-bridge.md)).
 
 ## Hexagonal architecture
 

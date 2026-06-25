@@ -1,0 +1,27 @@
+[package]
+name = "heartwood-bridge"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Relay-to-serial signing bridge: pumps NIP-46 traffic between Nostr relays and a USB-tethered Heartwood HSM (ESP32/ESP8266)"
+keywords = ["nostr", "nip46", "signing", "serial", "esp32"]
+categories = ["cryptography", "command-line-utilities"]
+
+[dependencies]
+# Async runtime + signal handling for graceful systemd shutdown.
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "io-util", "signal"] }
+# Relay transport. rustls (not native-tls) so the Pi cross-build needs no
+# system OpenSSL; webpki-roots bundles the Mozilla CA set.
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+futures-util = { version = "0.3", features = ["sink"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Blocking serial transport to the device (same crate the Pi web binary uses).
+serialport = "4"
+crc32fast = "1"
+# npub (bech32) decoding for the master public key discovered over serial.
+bech32 = "0.11"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = "0.3"

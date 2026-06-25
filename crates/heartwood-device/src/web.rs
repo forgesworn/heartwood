@@ -1809,7 +1809,10 @@ fn build_frame(frame_type: u8, payload: &[u8]) -> Vec<u8> {
     let len = payload.len() as u16;
     frame.extend_from_slice(&len.to_be_bytes());
     frame.extend_from_slice(payload);
-    let checksum = crc32fast::hash(&frame);
+    // CRC covers type + length + payload, NOT the 2 magic bytes — matching the
+    // firmware (heartwood-esp32 common/src/frame.rs). Hashing the whole frame
+    // (including magic) here would be rejected by the device.
+    let checksum = crc32fast::hash(&frame[FRAME_MAGIC.len()..]);
     frame.extend_from_slice(&checksum.to_be_bytes());
     frame
 }
@@ -1860,7 +1863,8 @@ fn read_frame(
         // Verify CRC over everything except the trailing 4-byte CRC itself
         let expected_crc =
             u32::from_be_bytes([buf[total - 4], buf[total - 3], buf[total - 2], buf[total - 1]]);
-        let actual_crc = crc32fast::hash(&buf[..total - 4]);
+        // CRC covers type + length + payload, NOT the 2 magic bytes.
+        let actual_crc = crc32fast::hash(&buf[FRAME_MAGIC.len()..total - 4]);
         if actual_crc != expected_crc {
             return Err("CRC mismatch in ESP32 response".to_string());
         }
