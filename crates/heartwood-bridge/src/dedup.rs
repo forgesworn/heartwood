@@ -22,10 +22,7 @@ struct Inner {
 impl Seen {
     pub fn new(capacity: usize) -> Self {
         Self {
-            inner: Arc::new(Mutex::new(Inner {
-                set: HashSet::new(),
-                order: VecDeque::new(),
-            })),
+            inner: Arc::new(Mutex::new(Inner { set: HashSet::new(), order: VecDeque::new() })),
             capacity: capacity.max(1),
         }
     }

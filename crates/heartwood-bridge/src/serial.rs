@@ -71,7 +71,12 @@ impl SerialSession {
         Self { io }
     }
 
-    fn transact(&mut self, frame_type: u8, payload: &[u8], timeout: Duration) -> Result<(u8, Vec<u8>)> {
+    fn transact(
+        &mut self,
+        frame_type: u8,
+        payload: &[u8],
+        timeout: Duration,
+    ) -> Result<(u8, Vec<u8>)> {
         let frame = frame::build_frame(frame_type, payload);
         std::io::Write::write_all(&mut *self.io, &frame).context("serial write failed")?;
         frame::read_frame(&mut *self.io, timeout)
@@ -99,7 +104,8 @@ impl SerialSession {
         if ty != FRAME_TYPE_PROVISION_LIST_RESPONSE {
             bail!("expected PROVISION_LIST_RESPONSE (0x07), got {ty:#04x}");
         }
-        let infos: Vec<Value> = serde_json::from_slice(&payload).context("parsing provision-list JSON")?;
+        let infos: Vec<Value> =
+            serde_json::from_slice(&payload).context("parsing provision-list JSON")?;
         let mut pubkeys = Vec::new();
         for info in infos {
             if let Some(npub_str) = info.get("npub").and_then(Value::as_str) {
@@ -128,11 +134,8 @@ impl SerialSession {
     /// the fully-signed response event JSON (publish verbatim), or `None` if
     /// the device NACKed (unknown master, decrypt failure, or policy denial).
     pub fn sign(&mut self, encrypted_request_payload: &[u8]) -> Result<Option<String>> {
-        let (ty, resp) = self.transact(
-            FRAME_TYPE_ENCRYPTED_REQUEST,
-            encrypted_request_payload,
-            SIGN_TIMEOUT,
-        )?;
+        let (ty, resp) =
+            self.transact(FRAME_TYPE_ENCRYPTED_REQUEST, encrypted_request_payload, SIGN_TIMEOUT)?;
         match ty {
             FRAME_TYPE_SIGN_ENVELOPE_RESPONSE => {
                 let json = String::from_utf8(resp).context("response event was not UTF-8")?;

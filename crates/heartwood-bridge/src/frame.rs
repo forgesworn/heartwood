@@ -67,7 +67,8 @@ pub fn parse_complete(buf: &[u8]) -> Result<(u8, Vec<u8>)> {
     if buf.len() != total {
         bail!("frame length mismatch: header says {total}, got {}", buf.len());
     }
-    let expected = u32::from_be_bytes([buf[total - 4], buf[total - 3], buf[total - 2], buf[total - 1]]);
+    let expected =
+        u32::from_be_bytes([buf[total - 4], buf[total - 3], buf[total - 2], buf[total - 1]]);
     // CRC covers type + length + payload, but NOT the 2 magic bytes.
     let actual = crc32fast::hash(&buf[FRAME_MAGIC.len()..total - 4]);
     if actual != expected {
@@ -80,7 +81,10 @@ pub fn parse_complete(buf: &[u8]) -> Result<(u8, Vec<u8>)> {
 ///
 /// Bytes are accumulated and resynchronised on the magic preamble, so stray
 /// bytes before a frame (e.g. a boot banner) are skipped rather than fatal.
-pub fn read_frame<R: std::io::Read + ?Sized>(port: &mut R, timeout: Duration) -> Result<(u8, Vec<u8>)> {
+pub fn read_frame<R: std::io::Read + ?Sized>(
+    port: &mut R,
+    timeout: Duration,
+) -> Result<(u8, Vec<u8>)> {
     let deadline = Instant::now() + timeout;
     let mut buf: Vec<u8> = Vec::with_capacity(128);
 

@@ -56,18 +56,9 @@ impl Nip46Request {
             .and_then(Value::as_str)
             .ok_or_else(|| anyhow!("event missing content"))?
             .to_string();
-        let id = event
-            .get("id")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string();
+        let id = event.get("id").and_then(Value::as_str).unwrap_or_default().to_string();
 
-        Ok(Some(Self {
-            id,
-            client_pubkey_hex: client.to_string(),
-            master_pubkey_hex,
-            content,
-        }))
+        Ok(Some(Self { id, client_pubkey_hex: client.to_string(), master_pubkey_hex, content }))
     }
 
     /// Build the `0x10` ENCRYPTED_REQUEST payload:

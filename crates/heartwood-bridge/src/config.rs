@@ -30,7 +30,8 @@ pub struct Config {
 impl Config {
     pub fn load() -> Result<Self> {
         let data_dir = PathBuf::from(
-            std::env::var("HEARTWOOD_DATA_DIR").unwrap_or_else(|_| "/var/lib/heartwood".to_string()),
+            std::env::var("HEARTWOOD_DATA_DIR")
+                .unwrap_or_else(|_| "/var/lib/heartwood".to_string()),
         );
         let serial_port = read_hsm_serial_port(&data_dir)?;
         let relays = read_relays(&data_dir);
@@ -91,10 +92,7 @@ fn parse_bridge_secret(raw: &[u8]) -> Result<[u8; 32]> {
         out.copy_from_slice(raw);
         return Ok(out);
     }
-    bail!(
-        "bridge.secret must be 64 hex chars or exactly 32 raw bytes (got {} bytes)",
-        raw.len()
-    )
+    bail!("bridge.secret must be 64 hex chars or exactly 32 raw bytes (got {} bytes)", raw.len())
 }
 
 #[cfg(test)]
