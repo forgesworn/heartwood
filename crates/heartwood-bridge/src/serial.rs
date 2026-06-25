@@ -27,8 +27,31 @@ const CONTROL_TIMEOUT: Duration = Duration::from_secs(5);
 /// the device plenty of time before giving up on a response.
 const SIGN_TIMEOUT: Duration = Duration::from_secs(45);
 
+/// Anything the session can speak over: a real serial port, or — in tests — an
+/// in-process socket pair. Blanket-implemented for every suitable byte stream.
+pub trait ReadWrite: std::io::Read + std::io::Write + Send {}
+impl<T: std::io::Read + std::io::Write + Send + ?Sized> ReadWrite for T {}
+
+/// Adapter letting a boxed `serialport` port (which cannot be coerced directly
+/// to `Box<dyn ReadWrite>`) back a session.
+struct SerialPortIo(Box<dyn serialport::SerialPort>);
+
+impl std::io::Read for SerialPortIo {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.0.read(buf)
+    }
+}
+impl std::io::Write for SerialPortIo {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.write(buf)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.flush()
+    }
+}
+
 pub struct SerialSession {
-    port: Box<dyn serialport::SerialPort>,
+    io: Box<dyn ReadWrite>,
 }
 
 impl SerialSession {
@@ -38,13 +61,20 @@ impl SerialSession {
             .timeout(READ_TIMEOUT)
             .open()
             .with_context(|| format!("opening serial port {port_path}"))?;
-        Ok(Self { port })
+        Ok(Self { io: Box::new(SerialPortIo(port)) })
+    }
+
+    /// Build a session over an arbitrary byte stream — tests drive it over a
+    /// `UnixStream` pair instead of real hardware.
+    #[cfg(test)]
+    pub fn from_io(io: Box<dyn ReadWrite>) -> Self {
+        Self { io }
     }
 
     fn transact(&mut self, frame_type: u8, payload: &[u8], timeout: Duration) -> Result<(u8, Vec<u8>)> {
         let frame = frame::build_frame(frame_type, payload);
-        std::io::Write::write_all(&mut *self.port, &frame).context("serial write failed")?;
-        frame::read_frame(&mut *self.port, timeout)
+        std::io::Write::write_all(&mut *self.io, &frame).context("serial write failed")?;
+        frame::read_frame(&mut *self.io, timeout)
     }
 
     /// `SESSION_AUTH` (0x21): present the 32-byte shared secret and expect

@@ -19,6 +19,9 @@ mod npub;
 mod relay;
 mod serial;
 
+#[cfg(all(test, unix))]
+mod e2e;
+
 use anyhow::{Context, Result};
 use tokio::sync::{broadcast, mpsc, oneshot};
 

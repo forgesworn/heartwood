@@ -142,8 +142,12 @@ codec (a future `heartwood-frame` crate) so `web.rs` and the bridge cannot drift
 
 ## Status & follow-ups
 
-- ✅ Crate builds; 19 unit tests pass (frame round-trip + firmware-parity CRC, npub decode
-  vs the NIP-19 vector, request parsing, `0x10` payload layout, dedup, secret parsing).
+- ✅ Crate builds; 20 tests pass — 19 unit (frame round-trip + firmware-parity CRC, npub
+  decode vs the NIP-19 vector, request parsing, `0x10` payload layout, dedup, secret
+  parsing) plus a hardware-free **end-to-end** test driving the real relay client and the
+  real `SerialSession` over a socket pair + a local websocket relay against a device
+  simulator (relay → `0x10` → simulated device → `0x35` → relay), verified stable over
+  repeated runs.
 - ⏳ **Hardware bring-up** — run against a provisioned ESP32 (set a `bridge.secret`, plug
   in, sign from a NIP-46 client). Not yet done.
 - ⏳ **Provisioning UX** — where the operator sets `bridge.secret` on *both* the device

@@ -80,7 +80,7 @@ pub fn parse_complete(buf: &[u8]) -> Result<(u8, Vec<u8>)> {
 ///
 /// Bytes are accumulated and resynchronised on the magic preamble, so stray
 /// bytes before a frame (e.g. a boot banner) are skipped rather than fatal.
-pub fn read_frame(port: &mut dyn serialport::SerialPort, timeout: Duration) -> Result<(u8, Vec<u8>)> {
+pub fn read_frame<R: std::io::Read + ?Sized>(port: &mut R, timeout: Duration) -> Result<(u8, Vec<u8>)> {
     let deadline = Instant::now() + timeout;
     let mut buf: Vec<u8> = Vec::with_capacity(128);
 
@@ -93,7 +93,14 @@ pub fn read_frame(port: &mut dyn serialport::SerialPort, timeout: Duration) -> R
         match std::io::Read::read(port, &mut byte) {
             Ok(1) => buf.push(byte[0]),
             Ok(_) => continue,
-            Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => continue,
+            // A read timeout (serial ports) or WouldBlock (sockets with a read
+            // timeout) just means "nothing yet" — keep waiting until the deadline.
+            Err(ref e)
+                if e.kind() == std::io::ErrorKind::TimedOut
+                    || e.kind() == std::io::ErrorKind::WouldBlock =>
+            {
+                continue
+            }
             Err(e) => return Err(anyhow::Error::new(e).context("serial read error")),
         }
 
