@@ -1,6 +1,5 @@
 /target
 .idea
-Cargo.lock
 
 # Private design docs (public docs like QUICKSTART.md are allowed)
 docs/specs/
