@@ -19,7 +19,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Blocking serial transport to the device (same crate the Pi web binary uses).
 serialport = "4"
-crc32fast = "1"
+# Shared binary serial frame codec (the same crate the Pi web binary uses).
+heartwood-frame = { path = "../heartwood-frame" }
 # npub (bech32) decoding for the master public key discovered over serial.
 bech32 = "0.11"
 anyhow = "1"

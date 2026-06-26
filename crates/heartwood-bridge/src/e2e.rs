@@ -18,13 +18,13 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_tungstenite::tungstenite::Message;
 
 use crate::dedup::Seen;
-use crate::frame::{
-    self, FRAME_TYPE_ENCRYPTED_REQUEST, FRAME_TYPE_NACK, FRAME_TYPE_PROVISION_LIST,
+use crate::relay::{run_relay, RequestJob};
+use crate::serial::SerialSession;
+use heartwood_frame::{
+    self as frame, FRAME_TYPE_ENCRYPTED_REQUEST, FRAME_TYPE_NACK, FRAME_TYPE_PROVISION_LIST,
     FRAME_TYPE_PROVISION_LIST_RESPONSE, FRAME_TYPE_SESSION_ACK, FRAME_TYPE_SESSION_AUTH,
     FRAME_TYPE_SIGN_ENVELOPE_RESPONSE,
 };
-use crate::relay::{run_relay, RequestJob};
-use crate::serial::SerialSession;
 
 // NIP-19 vector: this npub decodes to MASTER_HEX.
 const MASTER_NPUB: &str = "npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6";

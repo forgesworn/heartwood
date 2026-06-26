@@ -26,7 +26,7 @@ aes-gcm = "0.10"
 zeroize = "1"
 bip39 = "2"
 serialport = "4"
-crc32fast = "1"
+heartwood-frame = { path = "../heartwood-frame" }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util", "macros"] }
