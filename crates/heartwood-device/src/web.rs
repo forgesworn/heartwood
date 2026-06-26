@@ -1820,8 +1820,8 @@ fn build_frame(frame_type: u8, payload: &[u8]) -> Vec<u8> {
 /// Read one complete frame from the serial port (blocking, up to `timeout`).
 ///
 /// Returns `(frame_type, payload)` or an error string.
-fn read_frame(
-    port: &mut dyn serialport::SerialPort,
+fn read_frame<R: std::io::Read + ?Sized>(
+    port: &mut R,
     timeout: std::time::Duration,
 ) -> Result<(u8, Vec<u8>), String> {
     let deadline = std::time::Instant::now() + timeout;
@@ -1869,7 +1869,8 @@ fn read_frame(
             return Err("CRC mismatch in ESP32 response".to_string());
         }
 
-        let payload = buf[7..total - 4].to_vec();
+        // Payload starts after the 5-byte header (magic 2 + type 1 + len 2).
+        let payload = buf[5..total - 4].to_vec();
         return Ok((frame_type, payload));
     }
 }
@@ -2273,5 +2274,70 @@ mod tests {
         assert!(!is_valid_pair_name("has spaces"));
         assert!(!is_valid_pair_name("has/slash"));
         assert!(!is_valid_pair_name(&"a".repeat(65)));
+    }
+
+    // --- serial frame codec (the /api/hsm/pin transport) -----------------
+
+    #[test]
+    fn read_frame_returns_empty_payload_ack_without_panicking() {
+        // Regression: the firmware ACKs SET_PIN with an EMPTY payload (a 9-byte
+        // frame). The old `buf[7..total - 4]` slice became `buf[7..5]` — a
+        // reversed range that panicked on every successful PIN operation. The
+        // correct header is 5 bytes, so the payload slice must start at 5.
+        let frame = build_frame(FRAME_TYPE_ACK, &[]);
+        let mut reader = frame.as_slice();
+        let (ty, payload) =
+            read_frame(&mut reader, std::time::Duration::from_secs(1)).expect("must not panic");
+        assert_eq!(ty, FRAME_TYPE_ACK);
+        assert!(payload.is_empty());
+    }
+
+    #[test]
+    fn read_frame_recovers_the_full_payload() {
+        // The old offset silently dropped the first two payload bytes; assert
+        // every byte survives the round trip.
+        let payload = b"npub1exampledata";
+        let frame = build_frame(0x07, payload);
+        let mut reader = frame.as_slice();
+        let (ty, got) =
+            read_frame(&mut reader, std::time::Duration::from_secs(1)).expect("reads a frame");
+        assert_eq!(ty, 0x07);
+        assert_eq!(got, payload);
+    }
+
+    #[test]
+    fn read_frame_skips_boot_banner_noise() {
+        let mut bytes = b"esp32 ready\r\n".to_vec();
+        assert!(!bytes.windows(2).any(|w| w[0] == FRAME_MAGIC[0] && w[1] == FRAME_MAGIC[1]));
+        bytes.extend_from_slice(&build_frame(FRAME_TYPE_NACK, &[]));
+        let mut reader = bytes.as_slice();
+        let (ty, payload) =
+            read_frame(&mut reader, std::time::Duration::from_secs(1)).expect("reads a frame");
+        assert_eq!(ty, FRAME_TYPE_NACK);
+        assert!(payload.is_empty());
+    }
+
+    #[test]
+    fn read_frame_rejects_crc_corruption() {
+        let mut frame = build_frame(FRAME_TYPE_SET_PIN, b"1234");
+        let last = frame.len() - 1;
+        frame[last] ^= 0xff; // corrupt the trailing CRC
+        let mut reader = frame.as_slice();
+        assert!(read_frame(&mut reader, std::time::Duration::from_secs(1)).is_err());
+    }
+
+    #[test]
+    fn build_frame_crc_excludes_the_magic() {
+        // This is a second copy of the bridge's frame codec; pin the CRC scheme
+        // so the two cannot drift (a mismatch silently breaks the wire format
+        // against real firmware — the exact bug fixed when the bridge landed).
+        let payload = b"abc";
+        let frame = build_frame(FRAME_TYPE_SET_PIN, payload);
+        let crc = u32::from_be_bytes([frame[8], frame[9], frame[10], frame[11]]);
+        let mut hasher = crc32fast::Hasher::new();
+        hasher.update(&[FRAME_TYPE_SET_PIN]);
+        hasher.update(&(payload.len() as u16).to_be_bytes());
+        hasher.update(payload);
+        assert_eq!(crc, hasher.finalize(), "CRC must exclude the 2 magic bytes");
     }
 }
