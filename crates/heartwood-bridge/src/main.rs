@@ -14,7 +14,6 @@ mod bridge;
 mod config;
 mod dedup;
 mod event;
-mod frame;
 mod npub;
 mod relay;
 mod serial;

@@ -614,8 +614,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bech32",
- "crc32fast",
  "futures-util",
+ "heartwood-frame",
  "serde",
  "serde_json",
  "serialport",
@@ -634,7 +634,7 @@ dependencies = [
  "axum",
  "base64",
  "bip39",
- "crc32fast",
+ "heartwood-frame",
  "nip46-signer",
  "nsec-tree-rs",
  "password-hash",
@@ -648,6 +648,13 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "zeroize",
+]
+
+[[package]]
+name = "heartwood-frame"
+version = "0.1.0"
+dependencies = [
+ "crc32fast",
 ]
 
 [[package]]

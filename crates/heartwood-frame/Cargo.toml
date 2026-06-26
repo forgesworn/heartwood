@@ -1,0 +1,12 @@
+[package]
+name = "heartwood-frame"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Binary serial frame codec shared by the Heartwood host binaries (the relay-serial bridge and the Pi web device)"
+keywords = ["nostr", "serial", "esp32", "framing"]
+publish = false
+
+[dependencies]
+crc32fast = "1"

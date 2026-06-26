@@ -8,14 +8,17 @@
 //!
 //! The CRC covers the **type, length and payload only — NOT the magic
 //! preamble**, matching the firmware in `heartwood-esp32`
-//! (`common/src/frame.rs`). (Note: `heartwood-device`'s in-file web serial
-//! codec hashes *including* the magic, which is incompatible with the device;
-//! this codec follows the firmware, which is authoritative.) The frame-type
-//! constants below are a subset of `heartwood-esp32`'s `common/src/types.rs`.
+//! (`common/src/frame.rs`), which is authoritative. The frame-type constants
+//! below are the subset used by the two host binaries — the relay-serial
+//! bridge and the Pi web device — drawn from `heartwood-esp32`'s
+//! `common/src/types.rs`.
+//!
+//! This crate exists so those two binaries share **one** codec rather than
+//! keeping (drifting) copies. A third copy lives in the firmware, which is
+//! `no_std` and owns the canonical definition; the host side mirrors it and is
+//! pinned to the same scheme by the tests below.
 
 use std::time::{Duration, Instant};
-
-use anyhow::{bail, Result};
 
 /// Frame preamble: ASCII "HW".
 pub const FRAME_MAGIC: [u8; 2] = [0x48, 0x57];
@@ -26,16 +29,67 @@ pub const HEADER_LEN: usize = 2 + 1 + 2;
 /// Fixed overhead around a payload: header(5) + crc(4).
 pub const FRAME_OVERHEAD: usize = HEADER_LEN + 4;
 
-// --- Frame types the bridge uses (subset of the firmware's full set) ---
-pub const FRAME_TYPE_NACK: u8 = 0x15;
+// --- Frame types (subset of the firmware's full set in common/src/types.rs) ---
 pub const FRAME_TYPE_PROVISION_LIST: u8 = 0x05;
+pub const FRAME_TYPE_ACK: u8 = 0x06;
 pub const FRAME_TYPE_PROVISION_LIST_RESPONSE: u8 = 0x07;
 pub const FRAME_TYPE_ENCRYPTED_REQUEST: u8 = 0x10;
+pub const FRAME_TYPE_NACK: u8 = 0x15;
 pub const FRAME_TYPE_SESSION_AUTH: u8 = 0x21;
 pub const FRAME_TYPE_SESSION_ACK: u8 = 0x22;
+pub const FRAME_TYPE_SET_PIN: u8 = 0x25;
 pub const FRAME_TYPE_SIGN_ENVELOPE_RESPONSE: u8 = 0x35;
 pub const FRAME_TYPE_FIRMWARE_INFO: u8 = 0x59;
 pub const FRAME_TYPE_FIRMWARE_INFO_RESPONSE: u8 = 0x5A;
+
+/// Anything that can go wrong reading or parsing a frame.
+#[derive(Debug)]
+pub enum FrameError {
+    /// The buffer is smaller than the fixed frame overhead.
+    TooShort(usize),
+    /// The magic preamble was wrong.
+    BadMagic,
+    /// The buffer length does not match the length the header declared.
+    LengthMismatch { expected: usize, actual: usize },
+    /// The trailing CRC did not match the recomputed CRC.
+    CrcMismatch { expected: u32, actual: u32 },
+    /// No complete frame arrived before the deadline.
+    Timeout,
+    /// The underlying reader returned an error.
+    Io(std::io::Error),
+}
+
+impl std::fmt::Display for FrameError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FrameError::TooShort(n) => write!(f, "frame buffer too short ({n} bytes)"),
+            FrameError::BadMagic => write!(f, "bad frame magic"),
+            FrameError::LengthMismatch { expected, actual } => {
+                write!(f, "frame length mismatch: header says {expected}, got {actual}")
+            }
+            FrameError::CrcMismatch { expected, actual } => {
+                write!(f, "CRC mismatch (expected {expected:#010x}, got {actual:#010x})")
+            }
+            FrameError::Timeout => write!(f, "timed out waiting for a frame from the device"),
+            FrameError::Io(e) => write!(f, "serial read error: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for FrameError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            FrameError::Io(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
+impl From<std::io::Error> for FrameError {
+    fn from(e: std::io::Error) -> Self {
+        FrameError::Io(e)
+    }
+}
 
 /// Build a framed serial message ready to write to the port.
 pub fn build_frame(frame_type: u8, payload: &[u8]) -> Vec<u8> {
@@ -54,26 +108,27 @@ pub fn build_frame(frame_type: u8, payload: &[u8]) -> Vec<u8> {
 ///
 /// `buf` must start at the magic bytes and contain one whole frame (the caller
 /// computes the length from the header). Returns `(frame_type, payload)`.
-pub fn parse_complete(buf: &[u8]) -> Result<(u8, Vec<u8>)> {
+pub fn parse_complete(buf: &[u8]) -> Result<(u8, Vec<u8>), FrameError> {
     if buf.len() < FRAME_OVERHEAD {
-        bail!("frame buffer too short ({} bytes)", buf.len());
+        return Err(FrameError::TooShort(buf.len()));
     }
     if buf[0] != FRAME_MAGIC[0] || buf[1] != FRAME_MAGIC[1] {
-        bail!("bad frame magic");
+        return Err(FrameError::BadMagic);
     }
     let frame_type = buf[2];
     let payload_len = u16::from_be_bytes([buf[3], buf[4]]) as usize;
     let total = FRAME_OVERHEAD + payload_len;
     if buf.len() != total {
-        bail!("frame length mismatch: header says {total}, got {}", buf.len());
+        return Err(FrameError::LengthMismatch { expected: total, actual: buf.len() });
     }
     let expected =
         u32::from_be_bytes([buf[total - 4], buf[total - 3], buf[total - 2], buf[total - 1]]);
     // CRC covers type + length + payload, but NOT the 2 magic bytes.
     let actual = crc32fast::hash(&buf[FRAME_MAGIC.len()..total - 4]);
     if actual != expected {
-        bail!("CRC mismatch (expected {expected:#010x}, got {actual:#010x})");
+        return Err(FrameError::CrcMismatch { expected, actual });
     }
+    // Payload starts after the 5-byte header (magic 2 + type 1 + len 2).
     Ok((frame_type, buf[HEADER_LEN..total - 4].to_vec()))
 }
 
@@ -81,31 +136,31 @@ pub fn parse_complete(buf: &[u8]) -> Result<(u8, Vec<u8>)> {
 ///
 /// Bytes are accumulated and resynchronised on the magic preamble, so stray
 /// bytes before a frame (e.g. a boot banner) are skipped rather than fatal.
+/// Per-read `TimedOut`/`WouldBlock` results just mean "nothing yet" and the
+/// read keeps waiting until the overall deadline.
 pub fn read_frame<R: std::io::Read + ?Sized>(
     port: &mut R,
     timeout: Duration,
-) -> Result<(u8, Vec<u8>)> {
+) -> Result<(u8, Vec<u8>), FrameError> {
     let deadline = Instant::now() + timeout;
     let mut buf: Vec<u8> = Vec::with_capacity(128);
 
     loop {
         if Instant::now() >= deadline {
-            bail!("timed out waiting for a frame from the device");
+            return Err(FrameError::Timeout);
         }
 
         let mut byte = [0u8; 1];
         match std::io::Read::read(port, &mut byte) {
             Ok(1) => buf.push(byte[0]),
             Ok(_) => continue,
-            // A read timeout (serial ports) or WouldBlock (sockets with a read
-            // timeout) just means "nothing yet" — keep waiting until the deadline.
             Err(ref e)
                 if e.kind() == std::io::ErrorKind::TimedOut
                     || e.kind() == std::io::ErrorKind::WouldBlock =>
             {
                 continue
             }
-            Err(e) => return Err(anyhow::Error::new(e).context("serial read error")),
+            Err(e) => return Err(FrameError::Io(e)),
         }
 
         // Need at least the header to know the total length.
@@ -134,7 +189,6 @@ mod tests {
     fn build_then_parse_round_trips() {
         let payload = b"hello device";
         let frame = build_frame(FRAME_TYPE_ENCRYPTED_REQUEST, payload);
-        // magic(2)+type(1)+len(2)+payload(12)+crc(4)
         assert_eq!(frame.len(), FRAME_OVERHEAD + payload.len());
         let (ty, got) = parse_complete(&frame).unwrap();
         assert_eq!(ty, FRAME_TYPE_ENCRYPTED_REQUEST);
@@ -152,23 +206,31 @@ mod tests {
     #[test]
     fn corrupt_payload_fails_crc() {
         let mut frame = build_frame(FRAME_TYPE_NACK, b"abc");
-        let mid = 6; // somewhere in the payload
-        frame[mid] ^= 0xff;
-        assert!(parse_complete(&frame).is_err());
+        frame[6] ^= 0xff; // somewhere in the payload
+        assert!(matches!(parse_complete(&frame), Err(FrameError::CrcMismatch { .. })));
     }
 
     #[test]
     fn bad_magic_rejected() {
         let mut frame = build_frame(FRAME_TYPE_NACK, b"x");
         frame[0] = 0x00;
-        assert!(parse_complete(&frame).is_err());
+        assert!(matches!(parse_complete(&frame), Err(FrameError::BadMagic)));
+    }
+
+    #[test]
+    fn length_mismatch_rejected() {
+        let frame = build_frame(FRAME_TYPE_NACK, b"abc");
+        // Hand the parser one byte too few: the header claims more than is present.
+        assert!(matches!(
+            parse_complete(&frame[..frame.len() - 1]),
+            Err(FrameError::LengthMismatch { .. })
+        ));
     }
 
     #[test]
     fn crc_excludes_magic_matching_firmware() {
-        // The firmware (heartwood-esp32 common/src/frame.rs) hashes
-        // type + length + payload, NOT the magic preamble. Pin that exact
-        // scheme so the bridge stays wire-compatible with real hardware.
+        // The firmware hashes type + length + payload, NOT the magic preamble.
+        // Pin that exact scheme so the host stays wire-compatible with hardware.
         let frame_type = FRAME_TYPE_ENCRYPTED_REQUEST;
         let payload = b"abc";
         let frame = build_frame(frame_type, payload);
@@ -266,7 +328,35 @@ mod tests {
     #[test]
     fn read_frame_times_out_when_silent() {
         let mut reader = DribbleReader::bytes(b""); // immediately drained → TimedOut
-        let err = read_frame(&mut reader, Duration::from_millis(80)).unwrap_err().to_string();
-        assert!(err.contains("timed out"), "{err}");
+        assert!(matches!(
+            read_frame(&mut reader, Duration::from_millis(80)),
+            Err(FrameError::Timeout)
+        ));
+    }
+
+    // --- regression: the device /api/hsm/pin payload-offset bug -----------
+
+    #[test]
+    fn read_frame_returns_empty_payload_without_panicking() {
+        // The firmware ACKs SET_PIN with an EMPTY payload (a 9-byte frame). A
+        // payload offset of 7 instead of 5 made the slice `buf[7..5]` — a
+        // reversed range that panicked on every PIN operation. Guard it.
+        let frame = build_frame(FRAME_TYPE_ACK, &[]);
+        let mut reader = frame.as_slice();
+        let (ty, payload) = read_frame(&mut reader, Duration::from_secs(1)).unwrap();
+        assert_eq!(ty, FRAME_TYPE_ACK);
+        assert!(payload.is_empty());
+    }
+
+    #[test]
+    fn read_frame_recovers_the_full_payload() {
+        // The buggy offset silently dropped the first two payload bytes; assert
+        // every byte survives the round trip.
+        let payload = b"npub1exampledata";
+        let frame = build_frame(FRAME_TYPE_PROVISION_LIST_RESPONSE, payload);
+        let mut reader = frame.as_slice();
+        let (ty, got) = read_frame(&mut reader, Duration::from_secs(1)).unwrap();
+        assert_eq!(ty, FRAME_TYPE_PROVISION_LIST_RESPONSE);
+        assert_eq!(got, payload);
     }
 }

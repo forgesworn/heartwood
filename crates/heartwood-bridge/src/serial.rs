@@ -10,13 +10,13 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use serde_json::Value;
 
-use crate::frame::{
-    self, FRAME_TYPE_ENCRYPTED_REQUEST, FRAME_TYPE_FIRMWARE_INFO,
+use crate::npub;
+use heartwood_frame::{
+    self as frame, FRAME_TYPE_ENCRYPTED_REQUEST, FRAME_TYPE_FIRMWARE_INFO,
     FRAME_TYPE_FIRMWARE_INFO_RESPONSE, FRAME_TYPE_NACK, FRAME_TYPE_PROVISION_LIST,
     FRAME_TYPE_PROVISION_LIST_RESPONSE, FRAME_TYPE_SESSION_ACK, FRAME_TYPE_SESSION_AUTH,
     FRAME_TYPE_SIGN_ENVELOPE_RESPONSE,
 };
-use crate::npub;
 
 const BAUD: u32 = 115_200;
 /// Per-`read` byte timeout used while assembling a frame.
@@ -79,7 +79,7 @@ impl SerialSession {
     ) -> Result<(u8, Vec<u8>)> {
         let frame = frame::build_frame(frame_type, payload);
         std::io::Write::write_all(&mut *self.io, &frame).context("serial write failed")?;
-        frame::read_frame(&mut *self.io, timeout)
+        Ok(frame::read_frame(&mut *self.io, timeout)?)
     }
 
     /// `SESSION_AUTH` (0x21): present the 32-byte shared secret and expect
@@ -150,7 +150,7 @@ impl SerialSession {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::frame::{
+    use heartwood_frame::{
         build_frame, parse_complete, FRAME_OVERHEAD, FRAME_TYPE_ENCRYPTED_REQUEST,
         FRAME_TYPE_FIRMWARE_INFO_RESPONSE, FRAME_TYPE_NACK, FRAME_TYPE_PROVISION_LIST,
         FRAME_TYPE_PROVISION_LIST_RESPONSE, FRAME_TYPE_SESSION_ACK, FRAME_TYPE_SESSION_AUTH,
