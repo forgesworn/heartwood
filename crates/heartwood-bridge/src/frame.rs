@@ -187,4 +187,86 @@ mod tests {
         hasher.update(payload);
         assert_eq!(emitted, hasher.finalize(), "CRC must exclude the magic bytes");
     }
+
+    // --- read_frame: streaming, resynchronisation and timeout ------------
+
+    /// A `Read` that yields a scripted byte stream one byte per call, with
+    /// optional `WouldBlock`/`TimedOut` stalls interleaved, then reports
+    /// `TimedOut` forever once drained — modelling a real serial port that
+    /// dribbles bytes slowly and returns read timeouts in between.
+    struct DribbleReader {
+        script: std::collections::VecDeque<std::io::Result<u8>>,
+    }
+
+    impl DribbleReader {
+        fn bytes(data: impl AsRef<[u8]>) -> Self {
+            Self { script: data.as_ref().iter().map(|&b| Ok(b)).collect() }
+        }
+        fn stall(&mut self, kind: std::io::ErrorKind) {
+            self.script.push_back(Err(std::io::Error::new(kind, "stall")));
+        }
+        fn then(&mut self, data: &[u8]) {
+            self.script.extend(data.iter().map(|&b| Ok(b)));
+        }
+    }
+
+    impl std::io::Read for DribbleReader {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if buf.is_empty() {
+                return Ok(0);
+            }
+            match self.script.pop_front() {
+                Some(Ok(b)) => {
+                    buf[0] = b;
+                    Ok(1)
+                }
+                Some(Err(e)) => Err(e),
+                None => Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "drained")),
+            }
+        }
+    }
+
+    #[test]
+    fn read_frame_reassembles_from_single_byte_reads() {
+        let frame = build_frame(FRAME_TYPE_SIGN_ENVELOPE_RESPONSE, b"streamed");
+        let mut reader = DribbleReader::bytes(&frame);
+        let (ty, payload) = read_frame(&mut reader, Duration::from_secs(1)).unwrap();
+        assert_eq!(ty, FRAME_TYPE_SIGN_ENVELOPE_RESPONSE);
+        assert_eq!(payload, b"streamed");
+    }
+
+    #[test]
+    fn read_frame_skips_leading_boot_banner() {
+        // Junk before the frame (e.g. a firmware boot banner) must be skipped by
+        // resynchronising on the magic preamble, not treated as a fatal error.
+        let mut bytes = b"esp32 boot\r\nready\r\n".to_vec();
+        assert!(
+            !bytes.windows(2).any(|w| w[0] == FRAME_MAGIC[0] && w[1] == FRAME_MAGIC[1]),
+            "fixture must not accidentally contain the magic"
+        );
+        bytes.extend_from_slice(&build_frame(FRAME_TYPE_NACK, b"x"));
+        let mut reader = DribbleReader::bytes(&bytes);
+        let (ty, payload) = read_frame(&mut reader, Duration::from_secs(1)).unwrap();
+        assert_eq!(ty, FRAME_TYPE_NACK);
+        assert_eq!(payload, b"x");
+    }
+
+    #[test]
+    fn read_frame_keeps_waiting_through_stalls() {
+        let frame = build_frame(FRAME_TYPE_PROVISION_LIST_RESPONSE, b"payload");
+        let mut reader = DribbleReader::bytes(&frame[..3]); // a few bytes...
+        reader.stall(std::io::ErrorKind::WouldBlock); // ...then a non-fatal stall...
+        reader.stall(std::io::ErrorKind::TimedOut); // ...and another...
+        reader.then(&frame[3..]); // ...then the rest of the frame.
+        let (ty, payload) = read_frame(&mut reader, Duration::from_secs(1)).unwrap();
+        assert_eq!(ty, FRAME_TYPE_PROVISION_LIST_RESPONSE);
+        assert_eq!(payload, b"payload");
+    }
+
+    #[test]
+    fn read_frame_times_out_when_silent() {
+        let mut reader = DribbleReader::bytes(b""); // immediately drained → TimedOut
+        let err = read_frame(&mut reader, Duration::from_millis(80)).unwrap_err().to_string();
+        assert!(err.contains("timed out"), "{err}");
+    }
 }

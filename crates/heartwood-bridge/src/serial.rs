@@ -146,3 +146,269 @@ impl SerialSession {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::frame::{
+        build_frame, parse_complete, FRAME_OVERHEAD, FRAME_TYPE_ENCRYPTED_REQUEST,
+        FRAME_TYPE_FIRMWARE_INFO_RESPONSE, FRAME_TYPE_NACK, FRAME_TYPE_PROVISION_LIST,
+        FRAME_TYPE_PROVISION_LIST_RESPONSE, FRAME_TYPE_SESSION_ACK, FRAME_TYPE_SESSION_AUTH,
+        FRAME_TYPE_SIGN_ENVELOPE_RESPONSE,
+    };
+    use serde_json::json;
+    use std::collections::VecDeque;
+
+    // NIP-19 vector: this npub decodes to MASTER_HEX (shared with the e2e test).
+    const MASTER_NPUB: &str = "npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6";
+    const MASTER_HEX: &str = "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d";
+    const SECRET: [u8; 32] = [0x42; 32];
+
+    /// A fully in-process mock device. Each complete frame the session writes is
+    /// handed to `handler`, whose optional `(type, payload)` reply is queued for
+    /// the session to read straight back. There are no sockets or threads:
+    /// `write_all` runs the handler synchronously, so the reply is already
+    /// buffered by the time the session reads it. This drives the *real* frame
+    /// codec in both directions, so every `SerialSession` branch is exercised
+    /// against genuinely-encoded frames.
+    /// `(frame_type, payload) -> optional (reply_type, reply_payload)`.
+    type FrameHandler = Box<dyn FnMut(u8, Vec<u8>) -> Option<(u8, Vec<u8>)> + Send>;
+
+    struct MockDevice {
+        handler: FrameHandler,
+        inbound: Vec<u8>,       // host → device bytes, until a whole frame lands
+        outbound: VecDeque<u8>, // device → host reply bytes awaiting a read
+    }
+
+    impl MockDevice {
+        fn new<H>(handler: H) -> Self
+        where
+            H: FnMut(u8, Vec<u8>) -> Option<(u8, Vec<u8>)> + Send + 'static,
+        {
+            Self { handler: Box::new(handler), inbound: Vec::new(), outbound: VecDeque::new() }
+        }
+
+        /// Pull one complete frame off `inbound` (if present), run the handler,
+        /// and queue its reply. Returns whether a frame was consumed.
+        fn consume_one_frame(&mut self) -> bool {
+            if self.inbound.len() < FRAME_OVERHEAD {
+                return false;
+            }
+            let payload_len = u16::from_be_bytes([self.inbound[3], self.inbound[4]]) as usize;
+            let total = FRAME_OVERHEAD + payload_len;
+            if self.inbound.len() < total {
+                return false;
+            }
+            let (ty, payload) =
+                parse_complete(&self.inbound[..total]).expect("session emitted a malformed frame");
+            self.inbound.drain(..total);
+            if let Some((reply_ty, reply_payload)) = (self.handler)(ty, payload) {
+                self.outbound.extend(build_frame(reply_ty, &reply_payload));
+            }
+            true
+        }
+    }
+
+    impl std::io::Read for MockDevice {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if buf.is_empty() {
+                return Ok(0);
+            }
+            match self.outbound.pop_front() {
+                Some(b) => {
+                    buf[0] = b;
+                    Ok(1)
+                }
+                // No reply queued: model a serial read timeout so `read_frame`
+                // keeps waiting rather than treating it as EOF.
+                None => Err(std::io::Error::new(std::io::ErrorKind::WouldBlock, "no reply queued")),
+            }
+        }
+    }
+
+    impl std::io::Write for MockDevice {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.inbound.extend_from_slice(buf);
+            while self.consume_one_frame() {}
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// A session wired to a scripted mock device.
+    fn session_with<H>(handler: H) -> SerialSession
+    where
+        H: FnMut(u8, Vec<u8>) -> Option<(u8, Vec<u8>)> + Send + 'static,
+    {
+        SerialSession::from_io(Box::new(MockDevice::new(handler)))
+    }
+
+    /// A session whose device always replies with the same frame.
+    fn always_replies(reply_ty: u8, payload: Vec<u8>) -> SerialSession {
+        session_with(move |_, _| Some((reply_ty, payload.clone())))
+    }
+
+    // --- authenticate (0x21 → 0x22) --------------------------------------
+
+    #[test]
+    fn authenticate_accepts_status_zero() {
+        let mut session = session_with(|ty, payload| {
+            assert_eq!(ty, FRAME_TYPE_SESSION_AUTH, "sends SESSION_AUTH");
+            assert_eq!(payload.as_slice(), &SECRET[..], "presents the secret verbatim");
+            Some((FRAME_TYPE_SESSION_ACK, vec![0x00]))
+        });
+        session.authenticate(&SECRET).expect("status 0x00 is success");
+    }
+
+    #[test]
+    fn authenticate_wrong_secret_is_a_named_error() {
+        let mut session = always_replies(FRAME_TYPE_SESSION_ACK, vec![0x01]);
+        let err = session.authenticate(&SECRET).unwrap_err().to_string();
+        assert!(err.contains("wrong secret"), "{err}");
+    }
+
+    #[test]
+    fn authenticate_unprovisioned_is_a_named_error() {
+        let mut session = always_replies(FRAME_TYPE_SESSION_ACK, vec![0x02]);
+        let err = session.authenticate(&SECRET).unwrap_err().to_string();
+        assert!(err.contains("no bridge secret"), "{err}");
+    }
+
+    #[test]
+    fn authenticate_unknown_status_is_rejected() {
+        let mut session = always_replies(FRAME_TYPE_SESSION_ACK, vec![0x7f]);
+        assert!(session.authenticate(&SECRET).is_err());
+    }
+
+    #[test]
+    fn authenticate_empty_ack_payload_is_rejected() {
+        // status.first() == None must not be read as success.
+        let mut session = always_replies(FRAME_TYPE_SESSION_ACK, vec![]);
+        assert!(session.authenticate(&SECRET).is_err());
+    }
+
+    #[test]
+    fn authenticate_wrong_frame_type_is_rejected() {
+        let mut session = always_replies(FRAME_TYPE_NACK, vec![]);
+        let err = session.authenticate(&SECRET).unwrap_err().to_string();
+        assert!(err.contains("SESSION_ACK"), "{err}");
+    }
+
+    // --- list_master_pubkeys (0x05 → 0x07) -------------------------------
+
+    #[test]
+    fn list_decodes_npub_to_hex() {
+        let infos = json!([{ "slot": 0, "label": "test", "mode": 1, "npub": MASTER_NPUB }]);
+        let mut session =
+            always_replies(FRAME_TYPE_PROVISION_LIST_RESPONSE, infos.to_string().into_bytes());
+        assert_eq!(session.list_master_pubkeys().unwrap(), vec![MASTER_HEX.to_string()]);
+    }
+
+    #[test]
+    fn list_skips_undecodable_npub_but_keeps_the_good_one() {
+        let infos = json!([
+            { "npub": "npub1thisisnotvalidbech32" },
+            { "npub": MASTER_NPUB },
+        ]);
+        let mut session =
+            always_replies(FRAME_TYPE_PROVISION_LIST_RESPONSE, infos.to_string().into_bytes());
+        assert_eq!(session.list_master_pubkeys().unwrap(), vec![MASTER_HEX.to_string()]);
+    }
+
+    #[test]
+    fn list_empty_is_an_error() {
+        let mut session = always_replies(FRAME_TYPE_PROVISION_LIST_RESPONSE, b"[]".to_vec());
+        let err = session.list_master_pubkeys().unwrap_err().to_string();
+        assert!(err.contains("no provisioned masters"), "{err}");
+    }
+
+    #[test]
+    fn list_invalid_json_is_an_error() {
+        let mut session = always_replies(FRAME_TYPE_PROVISION_LIST_RESPONSE, b"not json".to_vec());
+        assert!(session.list_master_pubkeys().is_err());
+    }
+
+    #[test]
+    fn list_wrong_frame_type_is_rejected() {
+        let mut session = always_replies(FRAME_TYPE_NACK, vec![]);
+        let err = session.list_master_pubkeys().unwrap_err().to_string();
+        assert!(err.contains("PROVISION_LIST_RESPONSE"), "{err}");
+    }
+
+    // --- sign (0x10 → 0x35 | 0x15) ---------------------------------------
+
+    #[test]
+    fn sign_returns_event_json_on_envelope_response() {
+        let event = r#"{"id":"cc","kind":24133,"sig":"dd"}"#;
+        let mut session = session_with(move |ty, _| {
+            assert_eq!(ty, FRAME_TYPE_ENCRYPTED_REQUEST, "sends ENCRYPTED_REQUEST");
+            Some((FRAME_TYPE_SIGN_ENVELOPE_RESPONSE, event.as_bytes().to_vec()))
+        });
+        assert_eq!(session.sign(b"payload").unwrap().as_deref(), Some(event));
+    }
+
+    #[test]
+    fn sign_returns_none_on_nack() {
+        // A device NACK (unknown master / decrypt failure / policy denial) is a
+        // clean "no result", not an error — the worker just logs and moves on.
+        let mut session = always_replies(FRAME_TYPE_NACK, vec![]);
+        assert_eq!(session.sign(b"payload").unwrap(), None);
+    }
+
+    #[test]
+    fn sign_unexpected_frame_type_is_an_error() {
+        let mut session = always_replies(FRAME_TYPE_SESSION_ACK, vec![0x00]);
+        let err = session.sign(b"payload").unwrap_err().to_string();
+        assert!(err.contains("unexpected response"), "{err}");
+    }
+
+    #[test]
+    fn sign_non_utf8_response_is_an_error() {
+        let mut session = always_replies(FRAME_TYPE_SIGN_ENVELOPE_RESPONSE, vec![0xff, 0xfe]);
+        assert!(session.sign(b"payload").is_err());
+    }
+
+    // --- firmware_info (0x59 → 0x5A) -------------------------------------
+
+    #[test]
+    fn firmware_info_parses_json() {
+        let info = json!({ "version": "0.9.7", "board": "esp8266" });
+        let mut session =
+            always_replies(FRAME_TYPE_FIRMWARE_INFO_RESPONSE, info.to_string().into_bytes());
+        let got = session.firmware_info().unwrap();
+        assert_eq!(got["version"], "0.9.7");
+    }
+
+    #[test]
+    fn firmware_info_wrong_frame_type_is_rejected() {
+        let mut session = always_replies(FRAME_TYPE_NACK, vec![]);
+        assert!(session.firmware_info().is_err());
+    }
+
+    // --- whole-session reuse ---------------------------------------------
+
+    #[test]
+    fn one_session_handles_auth_list_then_repeated_signs() {
+        // The e2e exercises a single sign. This proves the codec re-synchronises
+        // across many transactions on one long-lived session, as the real
+        // serial worker drives it.
+        let mut session = session_with(|ty, _| match ty {
+            FRAME_TYPE_SESSION_AUTH => Some((FRAME_TYPE_SESSION_ACK, vec![0x00])),
+            FRAME_TYPE_PROVISION_LIST => Some((
+                FRAME_TYPE_PROVISION_LIST_RESPONSE,
+                json!([{ "npub": MASTER_NPUB }]).to_string().into_bytes(),
+            )),
+            FRAME_TYPE_ENCRYPTED_REQUEST => {
+                Some((FRAME_TYPE_SIGN_ENVELOPE_RESPONSE, b"{\"ok\":true}".to_vec()))
+            }
+            _ => Some((FRAME_TYPE_NACK, vec![])),
+        });
+        session.authenticate(&SECRET).unwrap();
+        assert_eq!(session.list_master_pubkeys().unwrap(), vec![MASTER_HEX.to_string()]);
+        for _ in 0..3 {
+            assert_eq!(session.sign(b"req").unwrap().as_deref(), Some("{\"ok\":true}"));
+        }
+    }
+}
