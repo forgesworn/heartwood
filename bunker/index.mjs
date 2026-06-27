@@ -12,7 +12,7 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { getConversationKey, encrypt, decrypt } from 'nostr-tools/nip44'
 import { finalizeEvent, getPublicKey, generateSecretKey } from 'nostr-tools/pure'
-import { decode as nip19decode } from 'nostr-tools/nip19'
+import { decode as nip19decode, npubEncode } from 'nostr-tools/nip19'
 import { SimplePool } from 'nostr-tools/pool'
 import WebSocket from 'ws'
 import { fromNsec } from 'nsec-tree/core'
@@ -174,34 +174,24 @@ const personasPath = `${DATA_DIR}/personas.json`
 let personas = loadJson(personasPath, [])
 
 /**
- * Active signing identity. Null means the master key (userSk/userPk).
- * When set, points to a persona entry whose key is used for signing.
+ * Resolve the identity a NIP-46 request was addressed to — its remote-signer
+ * pubkey, i.e. the event's `#p` target. Each identity's own key serves as both
+ * the NIP-44 transport key and the event-signing key, so one connection maps to
+ * exactly one identity (there is no global "active" pointer).
+ *
+ * Returns `{ sk, pk, ephemeral }`, or `null` if `targetHex` is not an identity
+ * we serve. Persona keys are re-derived on demand; pass the result to
+ * `releaseKey()` after use to zero the derived key material.
  */
-let activePersonaPubkey = null
-
-// Restore active persona from config
-const personaConfigPath = `${DATA_DIR}/active-persona.json`
-const personaConfig = loadJson(personaConfigPath, {})
-if (personaConfig.activePubkey) {
-  activePersonaPubkey = personaConfig.activePubkey
-}
-
-/**
- * Get the currently active signing key and pubkey.
- * When a persona is active, the private key is re-derived on each call.
- * Call `releaseKey(result)` after use to zero derived key material.
- */
-function getActiveSigningKey() {
-  if (!activePersonaPubkey) {
+function resolveIdentity(targetHex) {
+  if (targetHex === userPk) {
     return { sk: userSk, pk: userPk, ephemeral: false }
   }
-  const persona = personas.find((p) => p.pubkey === activePersonaPubkey)
+  const persona = personas.find((p) => p.pubkey === targetHex)
   if (!persona) {
-    // Persona was removed — fall back to master
-    activePersonaPubkey = null
-    return { sk: userSk, pk: userPk, ephemeral: false }
+    return null
   }
-  // Re-derive the private key from the tree root
+  // Re-derive the persona's private key from the tree root.
   const derived = derivePersona(treeRoot, persona.name, persona.index)
   return {
     sk: derived.identity.privateKey,
@@ -319,8 +309,6 @@ if (existsSync(bunkerKeyPath)) {
   console.log('Generated new bunker keypair')
 }
 
-const bunkerPk = getPublicKey(bunkerSk)
-
 // --- 4. Connect to relays and subscribe ---
 
 const pool = new SimplePool()
@@ -328,13 +316,43 @@ const pool = new SimplePool()
 /** Active subscription handle, tracked so we can close it on relay change. */
 let activeSub = null
 
-/** Build a bunker URI from the bunker pubkey and relay list. */
-function buildBunkerUri(relayList) {
-  const params = relayList.map((r) => `relay=${encodeURIComponent(r)}`).join('&')
-  return `bunker://${bunkerPk}?${params}`
+/** Hex pubkeys of every identity we currently serve: master + all personas. */
+function servedPubkeys() {
+  return [userPk, ...personas.map((p) => p.pubkey)]
 }
 
-/** Write the bunker URI file and subscribe to the given relays. */
+/** Build a bunker URI addressed to a specific identity pubkey. */
+function buildBunkerUri(pubkeyHex, relayList) {
+  const params = relayList.map((r) => `relay=${encodeURIComponent(r)}`).join('&')
+  return `bunker://${pubkeyHex}?${params}`
+}
+
+/**
+ * Persist the per-identity bunker URIs and return the master URI.
+ *  - `bunker-uri.txt`   the master URI (the device's /api/status still reads this)
+ *  - `bunker-uris.json` `[{ label, pubkey, npub, uri }]` for master + every persona
+ */
+function writeBunkerUris(relayList) {
+  const masterUri = buildBunkerUri(userPk, relayList)
+  writeFileSync(`${DATA_DIR}/bunker-uri.txt`, masterUri, { mode: 0o600 })
+
+  const manifest = [
+    { label: 'master', pubkey: userPk, npub: npubEncode(userPk), uri: masterUri },
+    ...personas.map((p) => ({
+      label: p.name,
+      pubkey: p.pubkey,
+      npub: npubEncode(p.pubkey),
+      uri: buildBunkerUri(p.pubkey, relayList),
+    })),
+  ]
+  writeFileSync(`${DATA_DIR}/bunker-uris.json`, JSON.stringify(manifest, null, 2), {
+    mode: 0o600,
+  })
+
+  return masterUri
+}
+
+/** Subscribe for requests to every served identity, then (re)write the URIs. */
 function connectRelays(relayList) {
   // Close any existing subscription before reconnecting
   if (activeSub) {
@@ -344,7 +362,7 @@ function connectRelays(relayList) {
 
   activeSub = pool.subscribe(
     relayList,
-    { kinds: [24133], '#p': [bunkerPk] },
+    { kinds: [24133], '#p': servedPubkeys() },
     {
       onevent: async (event) => {
         try {
@@ -356,11 +374,8 @@ function connectRelays(relayList) {
     },
   )
 
-  // Recompute and persist the bunker URI
-  const bunkerUri = buildBunkerUri(relayList)
-  writeFileSync(`${DATA_DIR}/bunker-uri.txt`, bunkerUri, { mode: 0o600 })
-
-  return bunkerUri
+  // Recompute and persist the per-identity bunker URIs.
+  return writeBunkerUris(relayList)
 }
 
 // --- 5. Write bunker URI and start initial subscription ---
@@ -403,8 +418,25 @@ function recordSlotClient(secret, clientPk) {
 // --- 6. Request handler ---
 
 async function handleRequest(event) {
+  // Route by the request's `#p` target: every identity has its own bunker URI
+  // and signs with its own key. Resolve once here; release the derived key in
+  // the `finally` below.
+  const targetTag = event.tags.find((t) => Array.isArray(t) && t[0] === 'p')
+  const identity = targetTag ? resolveIdentity(targetTag[1]) : null
+  if (!identity) {
+    // Not addressed to an identity we serve (unknown or stale persona) — ignore.
+    return
+  }
+  try {
+    await handleRequestForIdentity(event, identity)
+  } finally {
+    releaseKey(identity)
+  }
+}
+
+async function handleRequestForIdentity(event, identity) {
   const clientPk = event.pubkey
-  const conversationKey = getConversationKey(bunkerSk, clientPk)
+  const conversationKey = getConversationKey(identity.sk, clientPk)
 
   let request
   try {
@@ -444,7 +476,7 @@ async function handleRequest(event) {
             tags: [['p', clientPk]],
             content: encrypted,
           },
-          bunkerSk,
+          identity.sk,
         )
         await Promise.any(pool.publish(relays, responseEvent))
         return
@@ -468,7 +500,7 @@ async function handleRequest(event) {
           tags: [['p', clientPk]],
           content: encrypted,
         },
-        bunkerSk,
+        identity.sk,
       )
       await Promise.any(pool.publish(relays, responseEvent))
       return
@@ -511,9 +543,7 @@ async function handleRequest(event) {
       break
 
     case 'get_public_key': {
-      const active = getActiveSigningKey()
-      result = active.pk
-      releaseKey(active)
+      result = identity.pk
       break
     }
 
@@ -543,13 +573,8 @@ async function handleRequest(event) {
         error = `signing kind ${template.kind} not permitted for this client`
         break
       }
-      const active = getActiveSigningKey()
-      try {
-        const signed = finalizeEvent(template, active.sk)
-        result = JSON.stringify(signed)
-      } finally {
-        releaseKey(active)
-      }
+      const signed = finalizeEvent(template, identity.sk)
+      result = JSON.stringify(signed)
       break
     }
 
@@ -562,13 +587,8 @@ async function handleRequest(event) {
         error = 'nip44_encrypt: peer_pubkey must be a 64-character hex string'
         break
       }
-      const active = getActiveSigningKey()
-      try {
-        const ck = getConversationKey(active.sk, request.params[0])
-        result = encrypt(request.params[1], ck)
-      } finally {
-        releaseKey(active)
-      }
+      const ck = getConversationKey(identity.sk, request.params[0])
+      result = encrypt(request.params[1], ck)
       break
     }
 
@@ -581,13 +601,8 @@ async function handleRequest(event) {
         error = 'nip44_decrypt: peer_pubkey must be a 64-character hex string'
         break
       }
-      const active = getActiveSigningKey()
-      try {
-        const ck = getConversationKey(active.sk, request.params[0])
-        result = decrypt(request.params[1], ck)
-      } finally {
-        releaseKey(active)
-      }
+      const ck = getConversationKey(identity.sk, request.params[0])
+      result = decrypt(request.params[1], ck)
       break
     }
 
@@ -632,33 +647,19 @@ async function handleRequest(event) {
       const record = { name, pubkey, purpose: derived.identity.purpose, index: derived.index }
       personas.push(record)
       saveJson(personasPath, personas)
-      console.log(`Derived persona "${name}" → ${pubkey.slice(0, 12)}...`)
+      // Serve the new persona immediately: re-subscribe (the filter now includes
+      // its pubkey) and refresh the per-identity bunker URIs.
+      connectRelays(relays)
+      console.log(`Derived persona "${name}" → ${pubkey.slice(0, 12)}... (now reachable)`)
       result = JSON.stringify(record)
       break
     }
 
     case 'heartwood_switch': {
-      const targetPubkey = request.params[0]
-      if (typeof targetPubkey !== 'string' || targetPubkey.length === 0) {
-        error = 'heartwood_switch: target must be a non-empty string'
-        break
-      }
-      if (targetPubkey === userPk) {
-        // Switch back to master
-        activePersonaPubkey = null
-        saveJson(personaConfigPath, { activePubkey: null })
-        result = JSON.stringify({ switched: true, pubkey: userPk, name: 'master' })
-        break
-      }
-      const target = personas.find((p) => p.pubkey === targetPubkey)
-      if (!target) {
-        error = `unknown persona: ${targetPubkey.slice(0, 12)}...`
-        break
-      }
-      activePersonaPubkey = targetPubkey
-      saveJson(personaConfigPath, { activePubkey: targetPubkey })
-      console.log(`Switched to persona "${target.name}" (${targetPubkey.slice(0, 12)}...)`)
-      result = JSON.stringify({ switched: true, pubkey: targetPubkey, name: target.name })
+      // Legacy no-op. Identity is now selected per-connection by the bunker URI
+      // the client connected to (the request's `#p` target), so there is no
+      // global "active" identity to switch. Report the connection's identity.
+      result = JSON.stringify({ switched: true, pubkey: identity.pk })
       break
     }
 
@@ -689,21 +690,36 @@ async function handleRequest(event) {
         error = 'heartwood_lsag_sign: signerIndex out of range'
         break
       }
-      const lsagActive = getActiveSigningKey()
-      try {
-        const skHex = typeof lsagActive.sk === 'string' ? lsagActive.sk : bytesToHex(lsagActive.sk)
-        const sig = domain
-          ? lsagSign(message, ring, signerIndex, skHex, electionId, domain)
-          : lsagSign(message, ring, signerIndex, skHex, electionId)
-        result = JSON.stringify({
-          signature: sig,
-          keyImage: sig.keyImage,
-          publicKey: lsagActive.pk,
-        })
-        console.log(`LSAG signed: ring=${ring.length}, index=${signerIndex}, pubkey=${lsagActive.pk.slice(0, 12)}...`)
-      } finally {
-        releaseKey(lsagActive)
+      const skHex = typeof identity.sk === 'string' ? identity.sk : bytesToHex(identity.sk)
+      const sig = domain
+        ? lsagSign(message, ring, signerIndex, skHex, electionId, domain)
+        : lsagSign(message, ring, signerIndex, skHex, electionId)
+      result = JSON.stringify({
+        signature: sig,
+        keyImage: sig.keyImage,
+        publicKey: identity.pk,
+      })
+      console.log(`LSAG signed: ring=${ring.length}, index=${signerIndex}, pubkey=${identity.pk.slice(0, 12)}...`)
+      break
+    }
+
+    case 'switch_relays': {
+      // Some clients (e.g. Coracle/welshman) ask the signer to use a given set
+      // of relays for the session and stall until it succeeds. Union them into
+      // our relay set so we stay reachable on whatever relays the client uses,
+      // then acknowledge.
+      const requested = Array.isArray(request.params)
+        ? request.params.flat().filter((r) => typeof r === 'string' && /^wss?:\/\//.test(r))
+        : []
+      // Keep our configured relays first; cap the total so a client can't grow
+      // the set unboundedly.
+      const merged = [...new Set([...relays, ...requested])].slice(0, 16)
+      if (merged.length !== relays.length) {
+        relays = merged
+        connectRelays(relays)
+        console.log(`switch_relays: now serving on ${relays.join(', ')}`)
       }
+      result = 'ack'
       break
     }
 
@@ -724,7 +740,7 @@ async function handleRequest(event) {
       tags: [['p', clientPk]],
       content: encrypted,
     },
-    bunkerSk,
+    identity.sk,
   )
 
   await Promise.any(pool.publish(relays, responseEvent))
