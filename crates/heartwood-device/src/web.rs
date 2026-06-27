@@ -1227,6 +1227,73 @@ async fn api_bunker(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     }
 }
 
+/// `GET /api/identities` — list the per-identity bunker URIs the sidecar minted.
+///
+/// The bunker sidecar writes `bunker-uris.json` (`[{label, pubkey, npub, uri}]`,
+/// master + every derived persona). Each identity is its own NIP-46 connection,
+/// so a client can add several as separate accounts and switch between them
+/// without signing out. Returns an empty list if the file is missing (e.g. the
+/// bunker is not running, or an older sidecar that predates the manifest).
+async fn api_identities(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let identities = std::fs::read_to_string(state.data_file("bunker-uris.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .unwrap_or_else(|| json!([]));
+    axum::Json(json!({ "identities": identities }))
+}
+
+/// Look up an identity's bunker URI from the sidecar's `bunker-uris.json`.
+fn identity_uri(state: &AppState, pubkey: &str) -> Option<String> {
+    let manifest: Vec<serde_json::Value> =
+        std::fs::read_to_string(state.data_file("bunker-uris.json"))
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+    manifest.iter().find_map(|m| {
+        if m.get("pubkey").and_then(|v| v.as_str()) == Some(pubkey) {
+            m.get("uri").and_then(|v| v.as_str()).map(str::to_string)
+        } else {
+            None
+        }
+    })
+}
+
+#[derive(Deserialize)]
+struct IdentityQrQuery {
+    pubkey: String,
+}
+
+/// `GET /api/identities/qr?pubkey=<hex>` — an SVG QR code of that identity's
+/// bunker URI, for scanning into a mobile NIP-46 client.
+async fn api_identity_qr(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Query(q): axum::extract::Query<IdentityQrQuery>,
+) -> impl IntoResponse {
+    let Some(uri) = identity_uri(&state, &q.pubkey) else {
+        return (
+            StatusCode::NOT_FOUND,
+            [(header::CONTENT_TYPE, "text/plain")],
+            "unknown identity".to_string(),
+        );
+    };
+    match qrcode::QrCode::new(uri.as_bytes()) {
+        Ok(code) => {
+            let svg = code
+                .render::<qrcode::render::svg::Color>()
+                .min_dimensions(220, 220)
+                .dark_color(qrcode::render::svg::Color("#000000"))
+                .light_color(qrcode::render::svg::Color("#ffffff"))
+                .build();
+            (StatusCode::OK, [(header::CONTENT_TYPE, "image/svg+xml")], svg)
+        }
+        Err(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            [(header::CONTENT_TYPE, "text/plain")],
+            "qr generation failed".to_string(),
+        ),
+    }
+}
+
 /// `GET /api/bunker/status` — return relay connection status from the bunker sidecar.
 ///
 /// The bunker sidecar writes `bunker-status.json` every 15 seconds with per-relay
@@ -1675,6 +1742,10 @@ async fn api_pair(
 #[derive(Deserialize)]
 struct CreateSlotRequest {
     label: String,
+    /// Identity pubkey (hex) to attach the auto-approve secret to. Defaults to
+    /// the master bunker URI when absent.
+    #[serde(default)]
+    identity: Option<String>,
 }
 
 /// `POST /api/slots/create` — create a pre-authorised connect slot.
@@ -1700,13 +1771,19 @@ async fn api_create_slot(
     rand_core::OsRng.fill_bytes(&mut secret_bytes);
     let secret: String = secret_bytes.iter().map(|b| format!("{b:02x}")).collect();
 
-    // Read bunker URI
-    let bunker_uri = match std::fs::read_to_string(state.data_file("bunker-uri.txt")) {
-        Ok(uri) => uri.trim().to_string(),
-        Err(_) => {
+    // Base URI: the chosen identity's URI, or the master URI by default.
+    let base_uri = match &req.identity {
+        Some(pubkey) => identity_uri(&state, pubkey),
+        None => std::fs::read_to_string(state.data_file("bunker-uri.txt"))
+            .ok()
+            .map(|s| s.trim().to_string()),
+    };
+    let bunker_uri = match base_uri {
+        Some(uri) => uri,
+        None => {
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                axum::Json(json!({"error": "bunker not running"})),
+                axum::Json(json!({"error": "bunker not running or unknown identity"})),
             );
         }
     };
@@ -1955,6 +2032,8 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .route("/api/relays", get(api_get_relays).post(api_set_relays))
         .route("/api/bunker", get(api_bunker))
         .route("/api/bunker/status", get(api_bunker_status))
+        .route("/api/identities", get(api_identities))
+        .route("/api/identities/qr", get(api_identity_qr))
         .route("/api/password", post(api_set_password))
         .route("/api/tor", get(api_get_tor).post(api_set_tor))
         .route("/api/restart", post(api_restart))

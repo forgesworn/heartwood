@@ -296,6 +296,12 @@
                 <p class="warn">Paste this into NostrHub, Amethyst, or any NIP-46 client to connect.</p>
             </div>
 
+            <div id="identities-section" class="hidden" style="margin-top:1.5rem;">
+                <p class="label">Identities</p>
+                <p class="warn" style="margin-top:0;">Each identity has its own connection string. Paste one into a NIP-46 client (Coracle, noStrudel, Amethyst…); add several as separate accounts and switch between them without signing out.</p>
+                <div id="identities-list"></div>
+            </div>
+
             <div id="onion-section" class="hidden" style="margin-top:1.5rem;">
                 <p class="label">Tor address</p>
                 <div style="position:relative;">
@@ -910,6 +916,118 @@
                     document.getElementById('bunker-uri-section').classList.remove('hidden');
                 }
             } catch { /* ignore — URI will refresh on next full page load */ }
+            loadIdentities();
+        }
+
+        /** Fetch the per-identity bunker URIs and render them as a list. Falls
+         *  back to the single master-URI section when the sidecar hasn't written
+         *  the manifest (older sidecar or bunker not running). */
+        async function loadIdentities() {
+            try {
+                const res = await fetch('/api/identities');
+                const data = await res.json();
+                const list = Array.isArray(data.identities) ? data.identities : [];
+                if (list.length === 0) return;
+                const container = document.getElementById('identities-list');
+                container.innerHTML = '';
+                list.forEach((id) => {
+                    const row = document.createElement('div');
+                    row.style.marginBottom = '1rem';
+
+                    const label = document.createElement('p');
+                    label.className = 'label';
+                    label.style.margin = '0 0 0.2rem';
+                    label.textContent = id.label;
+
+                    const npub = document.createElement('div');
+                    npub.style.cssText = 'font-size:0.7rem; opacity:0.6; word-break:break-all; margin-bottom:0.25rem;';
+                    npub.textContent = id.npub || '';
+
+                    const wrap = document.createElement('div');
+                    wrap.style.position = 'relative';
+                    const uri = document.createElement('div');
+                    uri.className = 'npub';
+                    uri.style.paddingRight = '3rem';
+                    uri.textContent = id.uri;
+                    const btn = document.createElement('button');
+                    btn.textContent = 'Copy';
+                    btn.style.cssText = 'position:absolute; right:0.4rem; top:50%; transform:translateY(-50%); background:#2a2a2a; border:1px solid #444; border-radius:4px; color:#ccc; padding:0.3rem 0.5rem; cursor:pointer; font-size:0.75rem;';
+                    btn.addEventListener('click', () => copyToClipboard(uri.textContent, btn));
+                    wrap.appendChild(uri);
+                    wrap.appendChild(btn);
+
+                    // Per-identity actions: show a QR code, or swap in an auto-approve link.
+                    const actions = document.createElement('div');
+                    actions.style.cssText = 'margin-top:0.4rem; display:flex; gap:1.25rem;';
+                    const linkStyle = 'background:none; border:none; color:#6ea8fe; padding:0; cursor:pointer; font-size:0.75rem;';
+
+                    const qrBtn = document.createElement('button');
+                    qrBtn.textContent = 'Show QR';
+                    qrBtn.style.cssText = linkStyle;
+                    const qrBox = document.createElement('div');
+                    qrBox.className = 'hidden';
+                    qrBox.style.cssText = 'margin-top:0.5rem; width:200px;';
+                    qrBtn.addEventListener('click', () => {
+                        if (qrBox.classList.contains('hidden')) {
+                            if (!qrBox.dataset.loaded) {
+                                const img = document.createElement('img');
+                                img.src = '/api/identities/qr?pubkey=' + encodeURIComponent(id.pubkey);
+                                img.alt = 'QR code for ' + id.label;
+                                img.style.cssText = 'width:100%; display:block; background:#fff; border-radius:6px; padding:8px; box-sizing:border-box;';
+                                qrBox.appendChild(img);
+                                qrBox.dataset.loaded = '1';
+                            }
+                            qrBox.classList.remove('hidden');
+                            qrBtn.textContent = 'Hide QR';
+                        } else {
+                            qrBox.classList.add('hidden');
+                            qrBtn.textContent = 'Show QR';
+                        }
+                    });
+
+                    const slotBtn = document.createElement('button');
+                    slotBtn.textContent = 'Auto-approve link';
+                    slotBtn.title = 'Swap in a connection link that auto-approves the client — no separate approval step.';
+                    slotBtn.style.cssText = linkStyle;
+                    slotBtn.addEventListener('click', async () => {
+                        slotBtn.textContent = 'Creating…';
+                        slotBtn.disabled = true;
+                        try {
+                            const r = await fetch('/api/slots/create', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ label: id.label, identity: id.pubkey }),
+                            });
+                            const d = await r.json();
+                            if (d.bunker_uri) {
+                                uri.textContent = d.bunker_uri;   // Copy now yields the auto-approve URI
+                                qrBtn.style.display = 'none';      // server QR can't carry the secret
+                                qrBox.classList.add('hidden');
+                                slotBtn.textContent = 'Auto-approve on ✓';
+                                slotBtn.style.color = '#3fb950';
+                            } else {
+                                slotBtn.textContent = d.error ? ('Error: ' + d.error) : 'Failed';
+                                slotBtn.disabled = false;
+                            }
+                        } catch {
+                            slotBtn.textContent = 'Failed';
+                            slotBtn.disabled = false;
+                        }
+                    });
+
+                    actions.appendChild(qrBtn);
+                    actions.appendChild(slotBtn);
+
+                    row.appendChild(label);
+                    row.appendChild(npub);
+                    row.appendChild(wrap);
+                    row.appendChild(actions);
+                    row.appendChild(qrBox);
+                    container.appendChild(row);
+                });
+                document.getElementById('identities-section').classList.remove('hidden');
+                document.getElementById('bunker-uri-section').classList.add('hidden');
+            } catch { /* ignore — keep the single bunker URI fallback */ }
         }
 
         // --- Bunker URI ---
@@ -1317,6 +1435,7 @@
                         document.getElementById('bunker-uri').textContent = d.bunker_uri;
                         document.getElementById('bunker-uri-section').classList.remove('hidden');
                     }
+                    loadIdentities();
                     if (d.onion_address) {
                         document.getElementById('onion-address').textContent = d.onion_address;
                         document.getElementById('onion-section').classList.remove('hidden');
