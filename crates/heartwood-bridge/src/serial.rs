@@ -26,6 +26,11 @@ const CONTROL_TIMEOUT: Duration = Duration::from_secs(5);
 /// Signing may block on a physical button press (TOFU "ask" policy), so allow
 /// the device plenty of time before giving up on a response.
 const SIGN_TIMEOUT: Duration = Duration::from_secs(45);
+/// Classic ESP32 boards use a USB-to-UART bridge with small receive buffers.
+/// Pacing host writes prevents larger encrypted NIP-46 frames from arriving as
+/// one burst faster than the firmware can drain UART0.
+const WRITE_CHUNK: usize = 64;
+const WRITE_CHUNK_DELAY: Duration = Duration::from_millis(6);
 
 /// Anything the session can speak over: a real serial port, or — in tests — an
 /// in-process socket pair. Blanket-implemented for every suitable byte stream.
@@ -78,7 +83,13 @@ impl SerialSession {
         timeout: Duration,
     ) -> Result<(u8, Vec<u8>)> {
         let frame = frame::build_frame(frame_type, payload);
-        std::io::Write::write_all(&mut *self.io, &frame).context("serial write failed")?;
+        for (i, chunk) in frame.chunks(WRITE_CHUNK).enumerate() {
+            std::io::Write::write_all(&mut *self.io, chunk).context("serial write failed")?;
+            std::io::Write::flush(&mut *self.io).context("serial flush failed")?;
+            if (i + 1) * WRITE_CHUNK < frame.len() {
+                std::thread::sleep(WRITE_CHUNK_DELAY);
+            }
+        }
         Ok(frame::read_frame(&mut *self.io, timeout)?)
     }
 
@@ -158,6 +169,7 @@ mod tests {
     };
     use serde_json::json;
     use std::collections::VecDeque;
+    use std::sync::{Arc, Mutex};
 
     // NIP-19 vector: this npub decodes to MASTER_HEX (shared with the e2e test).
     const MASTER_NPUB: &str = "npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6";
@@ -178,6 +190,7 @@ mod tests {
         handler: FrameHandler,
         inbound: Vec<u8>,       // host → device bytes, until a whole frame lands
         outbound: VecDeque<u8>, // device → host reply bytes awaiting a read
+        write_sizes: Option<Arc<Mutex<Vec<usize>>>>,
     }
 
     impl MockDevice {
@@ -185,7 +198,24 @@ mod tests {
         where
             H: FnMut(u8, Vec<u8>) -> Option<(u8, Vec<u8>)> + Send + 'static,
         {
-            Self { handler: Box::new(handler), inbound: Vec::new(), outbound: VecDeque::new() }
+            Self {
+                handler: Box::new(handler),
+                inbound: Vec::new(),
+                outbound: VecDeque::new(),
+                write_sizes: None,
+            }
+        }
+
+        fn recording<H>(handler: H, write_sizes: Arc<Mutex<Vec<usize>>>) -> Self
+        where
+            H: FnMut(u8, Vec<u8>) -> Option<(u8, Vec<u8>)> + Send + 'static,
+        {
+            Self {
+                handler: Box::new(handler),
+                inbound: Vec::new(),
+                outbound: VecDeque::new(),
+                write_sizes: Some(write_sizes),
+            }
         }
 
         /// Pull one complete frame off `inbound` (if present), run the handler,
@@ -228,6 +258,9 @@ mod tests {
 
     impl std::io::Write for MockDevice {
         fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            if let Some(write_sizes) = &self.write_sizes {
+                write_sizes.lock().unwrap().push(buf.len());
+            }
             self.inbound.extend_from_slice(buf);
             while self.consume_one_frame() {}
             Ok(buf.len())
@@ -347,6 +380,26 @@ mod tests {
             Some((FRAME_TYPE_SIGN_ENVELOPE_RESPONSE, event.as_bytes().to_vec()))
         });
         assert_eq!(session.sign(b"payload").unwrap().as_deref(), Some(event));
+    }
+
+    #[test]
+    fn large_sign_request_is_written_in_uart_sized_chunks() {
+        let writes = Arc::new(Mutex::new(Vec::new()));
+        let observed_writes = writes.clone();
+        let mut session = SerialSession::from_io(Box::new(MockDevice::recording(
+            |ty, payload| {
+                assert_eq!(ty, FRAME_TYPE_ENCRYPTED_REQUEST, "sends ENCRYPTED_REQUEST");
+                assert_eq!(payload, vec![0xA5; 300]);
+                Some((FRAME_TYPE_SIGN_ENVELOPE_RESPONSE, b"{\"ok\":true}".to_vec()))
+            },
+            writes,
+        )));
+
+        assert_eq!(session.sign(&vec![0xA5; 300]).unwrap().as_deref(), Some("{\"ok\":true}"));
+
+        let writes = observed_writes.lock().unwrap();
+        assert!(writes.len() > 1, "large frame should be split, got {writes:?}");
+        assert!(writes.iter().all(|&n| n <= WRITE_CHUNK), "chunk exceeded limit: {writes:?}");
     }
 
     #[test]
