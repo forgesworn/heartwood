@@ -61,10 +61,6 @@ jobs:
         run: |
           docker run --rm --platform ${{ matrix.platform }} heartwood:test-${{ matrix.tag }} --version
 
-      - name: Run bundled test entrypoint on ${{ matrix.platform }}
-        run: |
-          docker run --rm --platform ${{ matrix.platform }} heartwood:test-${{ matrix.tag }} test
-
   publish:
     name: Publish multi-arch image
     runs-on: ubuntu-latest

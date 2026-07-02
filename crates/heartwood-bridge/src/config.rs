@@ -1,22 +1,30 @@
-//! Bridge configuration, read from the shared instance data directory.
+//! Bridge configuration — self-contained, browser-free.
 //!
-//! The bridge is a sidecar to `heartwood-device` and shares its data dir
-//! (`HEARTWOOD_DATA_DIR`, default `/var/lib/heartwood`, or `…/<instance>`). It
-//! reads three things and holds no key material of its own:
+//! The bridge is a headless daemon for the USB-only ("no WiFi") signer tier: it
+//! connects the Nostr relays to a USB-tethered hardware signer and holds no key
+//! material of its own. It is configured from its own data dir
+//! (`HEARTWOOD_DATA_DIR`, default `/var/lib/heartwood`), with environment
+//! overrides for the systemd/Docker case — no web UI involved. It reads:
 //!
-//!   - `master.payload` — the unlocked payload. In HSM mode this is the string
-//!     `hsm:<serial_port>` (no secret); any other value means this instance is
-//!     not an HSM instance and the bridge has nothing to do.
-//!   - `config.json` — the operator's relay list (`relays`).
-//!   - `bridge.secret` — the 32-byte serial bridge-session secret (64-char hex,
-//!     or 32 raw bytes), the same value provisioned into the device's NVS.
+//!   - the **serial port** — `HEARTWOOD_SERIAL_PORT`, else `config.json`'s
+//!     `serial_port` field. Required; the bridge has nothing to talk to without
+//!     it.
+//!   - the **relays** — `HEARTWOOD_RELAYS` (comma-separated), else
+//!     `config.json`'s `relays` array, else [`DEFAULT_RELAYS`].
+//!   - `bridge.secret` — the 32-byte serial bridge-session secret (64-char hex
+//!     or 32 raw bytes), the same value the `provision` CLI writes into the
+//!     device's NVS over USB.
+//!
+//! `config.json` (`{ "serial_port": "/dev/ttyUSB0", "relays": [...] }`) is a
+//! plain file the operator or the `provision` CLI writes — there is no
+//! privileged process that must own it.
 
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::Value;
 
-/// Relays used when `config.json` names none (matches the Pi web binary).
+/// Relays used when neither the env nor `config.json` names any.
 pub const DEFAULT_RELAYS: &[&str] =
     &["wss://relay.damus.io", "wss://nos.lol", "wss://relay.trotters.cc"];
 
@@ -33,35 +41,59 @@ impl Config {
             std::env::var("HEARTWOOD_DATA_DIR")
                 .unwrap_or_else(|_| "/var/lib/heartwood".to_string()),
         );
-        let serial_port = read_hsm_serial_port(&data_dir)?;
-        let relays = read_relays(&data_dir);
+        let file = read_config_json(&data_dir);
+        let serial_port = resolve_serial_port(&file)?;
+        let relays = resolve_relays(&file);
         let bridge_secret = read_bridge_secret(&data_dir)?;
         Ok(Self { data_dir, serial_port, relays, bridge_secret })
     }
 }
 
-fn read_hsm_serial_port(data_dir: &Path) -> Result<String> {
-    let path = data_dir.join("master.payload");
-    let payload = std::fs::read_to_string(&path)
-        .with_context(|| format!("reading {} (is the device unlocked?)", path.display()))?;
-    match payload.trim().strip_prefix("hsm:") {
-        Some(port) if !port.is_empty() => Ok(port.to_string()),
-        Some(_) => bail!("master.payload has an empty 'hsm:' serial port"),
-        None => bail!(
-            "instance is not in HSM mode (master.payload is not 'hsm:<port>') — \
-             the bridge only serves HSM-mode instances"
-        ),
-    }
-}
-
-fn read_relays(data_dir: &Path) -> Vec<String> {
-    let path = data_dir.join("config.json");
-    let configured = std::fs::read_to_string(&path)
+/// Parse `config.json` if present (missing/malformed → `None`, defaults apply).
+fn read_config_json(data_dir: &Path) -> Option<Value> {
+    std::fs::read_to_string(data_dir.join("config.json"))
         .ok()
         .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+}
+
+/// Serial port: `HEARTWOOD_SERIAL_PORT` env wins, else `config.json.serial_port`.
+fn resolve_serial_port(file: &Option<Value>) -> Result<String> {
+    if let Ok(port) = std::env::var("HEARTWOOD_SERIAL_PORT") {
+        let port = port.trim().to_string();
+        if !port.is_empty() {
+            return Ok(port);
+        }
+    }
+    let from_file = file
+        .as_ref()
+        .and_then(|v| v.get("serial_port"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    from_file.context(
+        "no serial port configured — set HEARTWOOD_SERIAL_PORT (e.g. /dev/ttyUSB0) \
+         or add \"serial_port\" to config.json in the data dir",
+    )
+}
+
+/// Relays: `HEARTWOOD_RELAYS` (comma-separated) wins, else `config.json.relays`,
+/// else [`DEFAULT_RELAYS`].
+fn resolve_relays(file: &Option<Value>) -> Vec<String> {
+    if let Ok(raw) = std::env::var("HEARTWOOD_RELAYS") {
+        let relays: Vec<String> = raw
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if !relays.is_empty() {
+            return relays;
+        }
+    }
+    let from_file = file
+        .as_ref()
         .and_then(|v| v.get("relays").cloned())
         .and_then(|v| serde_json::from_value::<Vec<String>>(v).ok());
-    match configured {
+    match from_file {
         Some(relays) if !relays.is_empty() => relays,
         _ => DEFAULT_RELAYS.iter().map(|s| s.to_string()).collect(),
     }
@@ -118,5 +150,46 @@ mod tests {
     fn rejects_wrong_length() {
         assert!(parse_bridge_secret(b"too short").is_err());
         assert!(parse_bridge_secret(&[0u8; 31]).is_err());
+    }
+
+    // The env overrides are read from the process environment; these tests
+    // exercise the config.json + default branches with the env unset, which is
+    // the deterministic part. `remove_var` guards against a stray override.
+    fn clear_env() {
+        std::env::remove_var("HEARTWOOD_SERIAL_PORT");
+        std::env::remove_var("HEARTWOOD_RELAYS");
+    }
+
+    #[test]
+    fn serial_port_from_config_json() {
+        clear_env();
+        let file = serde_json::json!({ "serial_port": "/dev/ttyUSB0" });
+        assert_eq!(resolve_serial_port(&Some(file)).unwrap(), "/dev/ttyUSB0");
+    }
+
+    #[test]
+    fn serial_port_missing_is_an_error() {
+        clear_env();
+        assert!(resolve_serial_port(&None).is_err());
+        let empty = serde_json::json!({ "serial_port": "  " });
+        assert!(resolve_serial_port(&Some(empty)).is_err());
+    }
+
+    #[test]
+    fn relays_from_config_json() {
+        clear_env();
+        let file = serde_json::json!({ "relays": ["wss://a.example", "wss://b.example"] });
+        assert_eq!(
+            resolve_relays(&Some(file)),
+            vec!["wss://a.example".to_string(), "wss://b.example".to_string()]
+        );
+    }
+
+    #[test]
+    fn relays_default_when_absent_or_empty() {
+        clear_env();
+        assert_eq!(resolve_relays(&None), DEFAULT_RELAYS);
+        let empty = serde_json::json!({ "relays": [] });
+        assert_eq!(resolve_relays(&Some(empty)), DEFAULT_RELAYS);
     }
 }

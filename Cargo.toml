@@ -1,10 +1,10 @@
 [workspace]
 resolver = "2"
 members = [
+    # nsec-tree-rs — derivation primitive kept as the reference Rust port (now
+    # unused by any binary here; the soft signer that consumed it is retired).
     "crates/heartwood-core",
-    "crates/heartwood-nip46",
     "crates/heartwood-frame",
-    "crates/heartwood-device",
     "crates/heartwood-bridge",
 ]
 

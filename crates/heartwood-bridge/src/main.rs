@@ -42,6 +42,37 @@ pub fn now_unix() -> u64 {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Minimal, dependency-free flag handling so `--version`/`--help` work
+    // without a runtime or a serial port (used by the image smoke test and by
+    // anyone poking at the binary). The bridge otherwise takes no arguments —
+    // it is configured from the environment and the data dir (see config.rs).
+    if let Some(arg) = std::env::args().nth(1) {
+        match arg.as_str() {
+            "--version" | "-V" => {
+                println!("heartwood-bridge {}", env!("CARGO_PKG_VERSION"));
+                return Ok(());
+            }
+            "--help" | "-h" => {
+                println!(
+                    "heartwood-bridge {}\n\n\
+                     Headless relay-to-USB signing bridge. Holds no keys.\n\n\
+                     Configuration (no flags):\n  \
+                     HEARTWOOD_DATA_DIR      data dir (default /var/lib/heartwood)\n  \
+                     HEARTWOOD_SERIAL_PORT   signer serial port, e.g. /dev/ttyUSB0\n  \
+                     HEARTWOOD_RELAYS        comma-separated relay list (optional)\n\n\
+                     The bridge secret is read from <data dir>/bridge.secret\n\
+                     (provisioned over USB with the `provision` CLI).",
+                    env!("CARGO_PKG_VERSION")
+                );
+                return Ok(());
+            }
+            other => {
+                eprintln!("heartwood-bridge: unexpected argument '{other}' (try --help)");
+                std::process::exit(2);
+            }
+        }
+    }
+
     tracing_subscriber::fmt::init();
     tracing::info!("heartwood-bridge starting");
 

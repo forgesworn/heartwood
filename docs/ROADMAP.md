@@ -124,8 +124,15 @@ towards something you could carry.
 
 ## Priority 6 — Hygiene burn-down
 
-- [ ] heartwood #4: CORS + auth on Tor-exposed endpoints (security-labelled).
-- [ ] heartwood #5: EncryptedBlob storage-encryption enforcement.
+- [x] heartwood #4 (unauth API) + #5 (plaintext seed at rest) — **resolved by
+      retiring the soft signer** (2026-07-02). Both findings lived only in
+      `heartwood-device`, a key-holding Pi signer that contradicted
+      "keys stay on hardware". Deleted it, its web UI, and the bunker sidecar;
+      `heartwood-bridge` (keyless relay↔USB daemon) is now the whole product,
+      configured from env/config.json + the `provision` CLI. Software-signer
+      use case → lite.mysignet.app. Uncommitted; deployment pipeline
+      (Docker/release) repointed but needs a real build/deploy test; README +
+      architecture docs still need a positioning rewrite.
 - [ ] Automate the sapwood firmware push to Hetzner: CI step fetching the
       firmware from the GitHub release by tag, replacing the manual rsync
       (the step that once served index.html as app.bin).

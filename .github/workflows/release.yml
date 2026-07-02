@@ -20,26 +20,22 @@ jobs:
         include:
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
-            binary: heartwood-device
-            asset: heartwood-aarch64-linux
+            asset: heartwood-bridge-aarch64-linux
             gcc_pkg: gcc-aarch64-linux-gnu
             linker: aarch64-linux-gnu-gcc
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
-            binary: heartwood-device
-            asset: heartwood-x86_64-linux
+            asset: heartwood-bridge-x86_64-linux
             gcc_pkg: ""
             linker: ""
           - target: armv7-unknown-linux-gnueabihf
             os: ubuntu-latest
-            binary: heartwood-device
-            asset: heartwood-armv7-linux
+            asset: heartwood-bridge-armv7-linux
             gcc_pkg: gcc-arm-linux-gnueabihf
             linker: arm-linux-gnueabihf-gcc
           - target: riscv64gc-unknown-linux-gnu
             os: ubuntu-latest
-            binary: heartwood-device
-            asset: heartwood-riscv64-linux
+            asset: heartwood-bridge-riscv64-linux
             gcc_pkg: gcc-riscv64-linux-gnu
             linker: riscv64-linux-gnu-gcc
 
@@ -50,11 +46,13 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      # The bridge uses serialport with default-features off (no libudev) and
+      # rustls (no OpenSSL), so cross-builds need only the target's gcc/linker.
       - name: Install cross-compilation tools
         if: matrix.gcc_pkg != ''
         run: |
           sudo apt-get update
-          sudo apt-get install -y ${{ matrix.gcc_pkg }} libudev-dev pkg-config
+          sudo apt-get install -y ${{ matrix.gcc_pkg }}
 
       - name: Configure linker
         if: matrix.linker != ''
@@ -68,11 +66,11 @@ jobs:
           key: ${{ matrix.target }}
 
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }} -p heartwood-device
+        run: cargo build --release --target ${{ matrix.target }} -p heartwood-bridge
 
       - name: Package binary
         run: |
-          cp target/${{ matrix.target }}/release/${{ matrix.binary }} ${{ matrix.asset }}
+          cp target/${{ matrix.target }}/release/heartwood-bridge ${{ matrix.asset }}
           chmod +x ${{ matrix.asset }}
 
       - name: Upload artifact
@@ -89,22 +87,11 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
+      # nsec-tree-rs — the derivation primitive, kept as a standalone library.
       - name: Publish nsec-tree-rs
         run: |
           set +e
           out=$(cargo publish -p nsec-tree-rs 2>&1); code=$?
-          echo "$out"
-          if [ $code -ne 0 ] && ! echo "$out" | grep -q "already exists"; then exit $code; fi
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-
-      - name: Wait for crates.io index
-        run: sleep 30
-
-      - name: Publish nip46-signer
-        run: |
-          set +e
-          out=$(cargo publish -p nip46-signer 2>&1); code=$?
           echo "$out"
           if [ $code -ne 0 ] && ! echo "$out" | grep -q "already exists"; then exit $code; fi
         env:
@@ -125,7 +112,7 @@ jobs:
       - name: Generate checksums
         run: |
           cd artifacts
-          for dir in heartwood-*/; do
+          for dir in heartwood-bridge-*/; do
             binary="${dir%/}"
             if [ -f "$dir/$binary" ]; then
               sha256sum "$dir/$binary" | sed "s|$dir/||" >> SHA256SUMS
@@ -137,22 +124,23 @@ jobs:
         run: |
           cat > artifacts/install.sh << 'SCRIPT'
           #!/usr/bin/env bash
-          # Heartwood one-liner installer for ARM / x86_64 / RISC-V Linux
+          # heartwood-bridge one-liner installer for ARM / x86_64 / RISC-V Linux.
+          # Installs the headless relay-to-USB signing bridge as a systemd
+          # service. The bridge holds no keys and opens no network service of its
+          # own — it connects out to relays and talks to a USB-tethered signer.
           set -euo pipefail
 
-          echo "=== Installing Heartwood ==="
+          echo "=== Installing heartwood-bridge ==="
 
-          # Detect architecture
           ARCH=$(uname -m)
           case "$ARCH" in
-            aarch64)         ASSET="heartwood-aarch64-linux" ;;
-            x86_64)          ASSET="heartwood-x86_64-linux" ;;
-            armv7l|armv7)    ASSET="heartwood-armv7-linux" ;;
-            riscv64)         ASSET="heartwood-riscv64-linux" ;;
+            aarch64)         ASSET="heartwood-bridge-aarch64-linux" ;;
+            x86_64)          ASSET="heartwood-bridge-x86_64-linux" ;;
+            armv7l|armv7)    ASSET="heartwood-bridge-armv7-linux" ;;
+            riscv64)         ASSET="heartwood-bridge-riscv64-linux" ;;
             *) echo "Unsupported architecture: $ARCH"; exit 1 ;;
           esac
 
-          # Get latest release URL
           REPO="forgesworn/heartwood"
           if command -v jq &> /dev/null; then
             TAG=$(curl -sL "https://api.github.com/repos/$REPO/releases/latest" | jq -r .tag_name)
@@ -167,11 +155,10 @@ jobs:
           TMPDIR=$(mktemp -d)
           trap 'rm -rf "$TMPDIR"' EXIT
 
-          echo "Downloading Heartwood $TAG for $ARCH..."
+          echo "Downloading heartwood-bridge $TAG for $ARCH..."
           curl -sL "$BASE_URL/$ASSET" -o "$TMPDIR/$ASSET"
           curl -sL "$BASE_URL/SHA256SUMS" -o "$TMPDIR/SHA256SUMS"
 
-          # Verify binary integrity
           echo "Verifying SHA-256 checksum..."
           cd "$TMPDIR"
           if ! grep "$ASSET" SHA256SUMS | sha256sum -c --quiet 2>/dev/null; then
@@ -181,58 +168,54 @@ jobs:
           echo "Checksum verified."
           cd /
 
-          sudo cp "$TMPDIR/$ASSET" /usr/local/bin/heartwood
-          sudo chmod +x /usr/local/bin/heartwood
+          sudo cp "$TMPDIR/$ASSET" /usr/local/bin/heartwood-bridge
+          sudo chmod +x /usr/local/bin/heartwood-bridge
 
-          # Install Tor if not present
-          if ! command -v tor &> /dev/null; then
-            echo "Installing Tor..."
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq tor
-          fi
-
-          # Create heartwood user
-          sudo useradd -r -s /usr/sbin/nologin heartwood 2>/dev/null || true
+          # Service account — added to dialout for USB serial access.
+          sudo useradd -r -s /usr/sbin/nologin -G dialout heartwood 2>/dev/null \
+            || sudo usermod -aG dialout heartwood
           sudo mkdir -p /var/lib/heartwood
           sudo chown heartwood:heartwood /var/lib/heartwood
           sudo chmod 700 /var/lib/heartwood
 
-          # Configure Tor hidden service
-          sudo mkdir -p /etc/tor/torrc.d
-          echo "SocksPort 0" | sudo tee /etc/tor/torrc.d/heartwood.conf > /dev/null
-          echo "HiddenServiceDir /var/lib/tor/heartwood/" | sudo tee -a /etc/tor/torrc.d/heartwood.conf > /dev/null
-          echo "HiddenServicePort 80 127.0.0.1:3000" | sudo tee -a /etc/tor/torrc.d/heartwood.conf > /dev/null
-          sudo systemctl restart tor
+          # Pick the serial port: honour an existing env, else first USB serial.
+          PORT="${HEARTWOOD_SERIAL_PORT:-}"
+          if [ -z "$PORT" ]; then
+            PORT=$(ls /dev/ttyUSB* /dev/ttyACM* 2>/dev/null | head -1 || true)
+          fi
+          if [ -z "$PORT" ]; then
+            echo "No USB serial device found. Set HEARTWOOD_SERIAL_PORT in"
+            echo "/etc/systemd/system/heartwood-bridge.service after plugging in the signer."
+            PORT="/dev/ttyUSB0"
+          fi
+          echo "Using serial port: $PORT"
 
-          # Install systemd service
-          cat << 'SERVICE' | sudo tee /etc/systemd/system/heartwood.service > /dev/null
+          cat << SERVICE | sudo tee /etc/systemd/system/heartwood-bridge.service > /dev/null
           [Unit]
-          Description=Heartwood signing appliance
-          After=network-online.target tor.service
-          Wants=network-online.target tor.service
+          Description=Heartwood relay-to-USB signing bridge
+          After=network-online.target
+          Wants=network-online.target
+          StartLimitBurst=5
+          StartLimitIntervalSec=60
 
           [Service]
           Type=simple
           User=heartwood
           Group=heartwood
-          ExecStart=/usr/local/bin/heartwood
+          SupplementaryGroups=dialout
+          ExecStart=/usr/local/bin/heartwood-bridge
           Restart=always
           RestartSec=10
-          StartLimitBurst=5
-          StartLimitIntervalSec=60
           Environment=RUST_LOG=info
-          Environment=HEARTWOOD_BIND=0.0.0.0:3000
+          Environment=HEARTWOOD_DATA_DIR=/var/lib/heartwood
+          Environment=HEARTWOOD_SERIAL_PORT=$PORT
+          # Set relays here (comma-separated) or via config.json in the data dir:
+          # Environment=HEARTWOOD_RELAYS=wss://relay.example
           ProtectSystem=strict
           ProtectHome=true
           ReadWritePaths=/var/lib/heartwood
-          RuntimeDirectory=heartwood
-          RuntimeDirectoryMode=0700
           NoNewPrivileges=true
           PrivateTmp=true
-          CapabilityBoundingSet=
-          SystemCallFilter=@system-service
-          SystemCallErrorNumber=EPERM
-          MemoryDenyWriteExecute=true
           RestrictRealtime=true
           RestrictSUIDSGID=true
           LockPersonality=true
@@ -240,102 +223,22 @@ jobs:
           ProtectKernelModules=true
           ProtectControlGroups=true
           RestrictNamespaces=true
-          DevicePolicy=closed
-          DeviceAllow=/dev/i2c-1 rw
 
           [Install]
           WantedBy=multi-user.target
           SERVICE
 
           sudo systemctl daemon-reload
-          sudo systemctl enable heartwood
-
-          # Install Node.js for the bunker sidecar
-          if ! command -v node &> /dev/null; then
-            echo "Installing Node.js..."
-            sudo apt-get install -y -qq nodejs npm
-          fi
-
-          # Install bunker sidecar
-          echo "Installing bunker sidecar..."
-          sudo mkdir -p /opt/heartwood/bunker
-          for f in index.mjs lib.mjs package.json package-lock.json; do
-            curl -sL "https://raw.githubusercontent.com/$REPO/$TAG/bunker/$f" \
-              -o "/opt/heartwood/bunker/$f"
-          done
-          cd /opt/heartwood/bunker && sudo npm ci --omit=dev && cd /
-          sudo chown -R heartwood:heartwood /opt/heartwood
-
-          cat << 'BUNKER_SERVICE' | sudo tee /etc/systemd/system/heartwood-bunker.service > /dev/null
-          [Unit]
-          Description=Heartwood NIP-46 bunker
-          After=network-online.target heartwood.service
-          Wants=network-online.target
-          Requires=heartwood.service
-          StartLimitBurst=5
-          StartLimitIntervalSec=60
-
-          [Service]
-          Type=simple
-          User=heartwood
-          Group=heartwood
-          WorkingDirectory=/opt/heartwood/bunker
-          ExecStart=/usr/bin/node index.mjs
-          Restart=always
-          RestartSec=15
-          Environment=NODE_ENV=production
-          ProtectSystem=strict
-          ProtectHome=true
-          ReadWritePaths=/var/lib/heartwood
-          ReadOnlyPaths=/opt/heartwood
-          # MemoryDenyWriteExecute intentionally omitted — Node.js V8 JIT needs W+X pages
-          NoNewPrivileges=true
-          PrivateTmp=true
-          CapabilityBoundingSet=
-          SystemCallFilter=@system-service
-          SystemCallErrorNumber=EPERM
-          RestrictRealtime=true
-          RestrictSUIDSGID=true
-          LockPersonality=true
-          ProtectKernelTunables=true
-          ProtectKernelModules=true
-          ProtectControlGroups=true
-          RestrictNamespaces=true
-          DevicePolicy=closed
-          MemoryMax=256M
-          TasksMax=32
-
-          [Install]
-          WantedBy=multi-user.target
-          BUNKER_SERVICE
-
-          sudo systemctl daemon-reload
-          sudo systemctl enable heartwood heartwood-bunker
-          sudo systemctl start heartwood
-          sudo systemctl start heartwood-bunker
+          sudo systemctl enable heartwood-bridge
 
           echo ""
-          echo "=== Heartwood installed ==="
-          echo "Status:  sudo systemctl status heartwood"
-          echo "Bunker:  sudo systemctl status heartwood-bunker"
-          echo "Logs:    sudo journalctl -u heartwood -u heartwood-bunker -f"
+          echo "=== heartwood-bridge installed ==="
+          echo "Before first start, provision the bridge secret onto the data dir over USB"
+          echo "with the provision CLI (writes /var/lib/heartwood/bridge.secret)."
           echo ""
-          echo "Waiting for Tor hidden service..."
-          for i in $(seq 1 60); do
-            if [ -f /var/lib/tor/heartwood/hostname ]; then
-              echo ""
-              echo "Your .onion address:"
-              sudo cat /var/lib/tor/heartwood/hostname
-              echo ""
-              echo "Scan this with your Nostr client to pair."
-              exit 0
-            fi
-            sleep 1
-            printf "."
-          done
-          echo ""
-          echo "Tor is still bootstrapping. Check later:"
-          echo "  sudo cat /var/lib/tor/heartwood/hostname"
+          echo "Start:   sudo systemctl start heartwood-bridge"
+          echo "Status:  sudo systemctl status heartwood-bridge"
+          echo "Logs:    sudo journalctl -u heartwood-bridge -f"
           SCRIPT
           chmod +x artifacts/install.sh
 
@@ -344,9 +247,9 @@ jobs:
         with:
           generate_release_notes: true
           files: |
-            artifacts/heartwood-aarch64-linux/heartwood-aarch64-linux
-            artifacts/heartwood-x86_64-linux/heartwood-x86_64-linux
-            artifacts/heartwood-armv7-linux/heartwood-armv7-linux
-            artifacts/heartwood-riscv64-linux/heartwood-riscv64-linux
+            artifacts/heartwood-bridge-aarch64-linux/heartwood-bridge-aarch64-linux
+            artifacts/heartwood-bridge-x86_64-linux/heartwood-bridge-x86_64-linux
+            artifacts/heartwood-bridge-armv7-linux/heartwood-bridge-armv7-linux
+            artifacts/heartwood-bridge-riscv64-linux/heartwood-bridge-riscv64-linux
             artifacts/SHA256SUMS
             artifacts/install.sh

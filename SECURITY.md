@@ -14,14 +14,20 @@ We aim to acknowledge reports within 48 hours and provide a timeline within 7 da
 
 In scope:
 - Key derivation logic in `heartwood-core` (HMAC-SHA256, BIP-39/32 path, encoding)
-- NIP-46 session authentication and permission enforcement in `heartwood-nip46`
-- Key storage and PIN verification in `heartwood-device`
+- The serial frame codec in `heartwood-frame`
+- `heartwood-bridge` — the relay-to-USB signing bridge: relay/serial handling,
+  de-duplication, and the fact that it must hold no key material and see no
+  plaintext (all signing happens on the USB-tethered hardware device)
 - Linkage proof construction and verification
 
 Out of scope:
-- The web UI aesthetic (not a security issue)
 - Side-channel attacks (power analysis, EM emissions) — Heartwood is not hardened to smartcard level and does not claim to be
 - Physical attacks with unlimited time and resources
+
+> Note: the former key-holding Pi signer (`heartwood-device`, its web UI, and
+> the bunker sidecar) has been **retired** — keys now stay on the hardware
+> signer and the bridge is a keyless relay↔USB daemon. The software-signer use
+> case lives at lite.mysignet.app.
 
 ## Cryptographic Primitives
 
