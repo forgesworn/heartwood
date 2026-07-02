@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.7.0] - 2026-07-02
 
 ### Added
 - **`heartwood-bridge`** — relay-to-serial signing bridge for HSM mode: a sidecar daemon that pumps NIP-46 requests between Nostr relays and a USB-tethered ESP32/ESP8266 signing device over `ENCRYPTED_REQUEST` (0x10) / `SIGN_ENVELOPE_RESPONSE` (0x35) frames; all cryptography happens inline on the device, so the bridge never holds key material or sees plaintext; ships with a `heartwood-bridge@.service` systemd unit
