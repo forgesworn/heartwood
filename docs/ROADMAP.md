@@ -33,10 +33,14 @@ the number-one value). No hardware needed.
       sign-then-verify guard against key drift; signature carried by
       `version.json`/`.sig` assets through sapwood (`ota.ts`, legacy fallback
       for pre-signature firmware) and heartwoodd (`X-Firmware-Signature`).
-      **Remaining before it's live:** generate the release key + set the
-      `OTA_SIGNING_SEED` secret (runbook: heartwood-esp32
-      `docs/ota-signing.md`), cut the next release, one bench OTA on a
-      Heltec. No eFuses involved; fully reversible.
+      **SHIPPED in v0.10.0** (2026-07-02): release key generated and backed
+      up, `OTA_SIGNING_SEED` secret set, release built green with all five
+      images signed, sapwood serving the signed manifest (heltec-v4 image
+      independently verified against the committed pubkey after sync).
+      Remaining: one bench OTA on a Heltec — 0.9.x → 0.10.0 exercises the
+      legacy fallback; the release after exercises enforcement. No eFuses
+      involved; fully reversible. Runbook: heartwood-esp32
+      `docs/ota-signing.md`.
 - [ ] Reproducible firmware builds, so released binaries are verifiable
       against the tagged source. Pairs with signed OTA.
 - [ ] Supply chain gates: `cargo-deny` in CI (heartwood #7, and
@@ -145,11 +149,12 @@ towards something you could carry.
 
 ## Session log
 
-- **2026-07-02 (later)** — Signed OTA implemented end to end (see the P1
-  tick above for the pieces). Devices now refuse firmware that isn't signed
-  by the release key; a compromised update channel can no longer install
-  code. Awaiting: key generation (`docs/ota-signing.md` in heartwood-esp32),
-  next release, one bench OTA. All work uncommitted pending review.
+- **2026-07-02 (later)** — Signed OTA implemented AND shipped as firmware
+  v0.10.0 (see the P1 tick above for the pieces). Devices running 0.10.0+
+  refuse firmware that isn't signed by the release key; a compromised
+  update channel can no longer install code. Key generated + backed up,
+  secret set, release green, sapwood synced and deployed. Left: one bench
+  OTA on a Heltec.
 - **2026-07-02** — Roadmap created from a three-repo survey (sapwood
   v0.8.10, firmware v0.9.14, bridge v0.7.0; all CI green, no open firmware
   issues, 8 open bridge issues). Decided: security audit + signed OTA first;
