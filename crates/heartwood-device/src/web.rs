@@ -2018,10 +2018,14 @@ async fn api_hsm_detect() -> impl IntoResponse {
 
 /// Build and return the application router.
 ///
-/// No CORS layer is applied — the web UI uses same-origin requests.
-/// Cross-origin access is denied by default for security.
+/// Release builds apply no CORS layer — the web UI uses same-origin requests
+/// and cross-origin access is denied by default for security. Debug builds
+/// additionally allow exactly the Sapwood dev server's origin
+/// (`http://localhost:5173`), so `npm run dev` in sapwood can talk to a local
+/// device without a rebuild. Never permissive: the allowance is one pinned
+/// localhost origin, and it is compiled out of release binaries entirely.
 pub fn create_router(state: Arc<AppState>) -> Router {
-    Router::new()
+    let router = Router::new()
         .route("/", get(serve_index))
         .route("/api/status", get(api_status))
         .route("/api/setup", post(api_setup))
@@ -2054,7 +2058,24 @@ pub fn create_router(state: Arc<AppState>) -> Router {
         .layer(middleware::from_fn_with_state(state.clone(), lock_middleware))
         .layer(middleware::from_fn_with_state(state.clone(), auth_middleware))
         .layer(DefaultBodyLimit::max(65536))
-        .with_state(state)
+        .with_state(state);
+
+    #[cfg(debug_assertions)]
+    let router = {
+        use tower_http::cors::{AllowHeaders, AllowMethods, CorsLayer};
+        router.layer(
+            CorsLayer::new()
+                .allow_origin(
+                    "http://localhost:5173"
+                        .parse::<axum::http::HeaderValue>()
+                        .expect("static origin parses"),
+                )
+                .allow_methods(AllowMethods::mirror_request())
+                .allow_headers(AllowHeaders::mirror_request()),
+        )
+    };
+
+    router
 }
 
 #[cfg(test)]
