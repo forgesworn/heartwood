@@ -18,7 +18,7 @@ futures-util = { version = "0.3", features = ["sink"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Blocking serial transport to the device (same crate the Pi web binary uses).
-serialport = "4"
+serialport = { version = "4", default-features = false } # no libudev: sysfs enumeration suffices and cross-builds stay linkable
 # Shared binary serial frame codec (the same crate the Pi web binary uses).
 heartwood-frame = { path = "../heartwood-frame" }
 # npub (bech32) decoding for the master public key discovered over serial.

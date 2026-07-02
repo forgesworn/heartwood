@@ -90,7 +90,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
 
       - name: Publish nsec-tree-rs
-        run: cargo publish -p nsec-tree-rs
+        run: |
+          set +e
+          out=$(cargo publish -p nsec-tree-rs 2>&1); code=$?
+          echo "$out"
+          if [ $code -ne 0 ] && ! echo "$out" | grep -q "already exists"; then exit $code; fi
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
@@ -98,7 +102,11 @@ jobs:
         run: sleep 30
 
       - name: Publish nip46-signer
-        run: cargo publish -p nip46-signer
+        run: |
+          set +e
+          out=$(cargo publish -p nip46-signer 2>&1); code=$?
+          echo "$out"
+          if [ $code -ne 0 ] && ! echo "$out" | grep -q "already exists"; then exit $code; fi
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
