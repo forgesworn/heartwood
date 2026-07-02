@@ -80,11 +80,8 @@ fn resolve_serial_port(file: &Option<Value>) -> Result<String> {
 /// else [`DEFAULT_RELAYS`].
 fn resolve_relays(file: &Option<Value>) -> Vec<String> {
     if let Ok(raw) = std::env::var("HEARTWOOD_RELAYS") {
-        let relays: Vec<String> = raw
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
+        let relays: Vec<String> =
+            raw.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
         if !relays.is_empty() {
             return relays;
         }
