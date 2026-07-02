@@ -1,62 +1,69 @@
 # Heartwood
 
-> Nostr private keys are pasted into web apps, stored in browser extensions, and copied to the clipboard. Heartwood keeps them in hardware instead.
+> Nostr private keys are pasted into web apps, stored in browser extensions, and copied to the clipboard. Heartwood keeps them on dedicated hardware instead.
 
-Heartwood is an open-source Nostr signing appliance that runs on a Raspberry Pi Zero 2 W (~GBP 32). It holds your master identity in hardware, derives unlimited unlinkable personas via nsec-tree, signs Nostr events via NIP-46 (Nostr Connect), and is reachable from anywhere over Tor. Private keys never leave the device.
+Heartwood is open-source Nostr signing built on nsec-tree. `heartwood-bridge` is a headless, keyless daemon that connects Nostr relays to a USB-tethered hardware signer -- an ESP32 running the [heartwood-esp32](https://github.com/forgesworn/heartwood-esp32) firmware. The bridge holds no key material and never sees plaintext: NIP-44 decryption, NIP-46 request dispatch, per-client permissions, session/replay protection, and signing all happen on the device itself, inline over USB. The bridge is only the device's relay connection, and nothing more.
 
-It is aimed at Nostr power users who want hardware-backed key security without the complexity of a cloud VPS, and at app developers building multi-identity Nostr clients that need a signing backend which works on iOS, Android, and web equally.
+It is aimed at Nostr power users who want hardware-backed key security without renting a VPS, and at app developers building multi-identity Nostr clients that need a signing backend which works on iOS, Android, and web equally, since NIP-46 is relay-mediated.
 
-Heartwood is a direct replacement for nsecBunker (no VPS required), an iOS-compatible alternative to Amber (Android-only), and a multi-identity alternative to LNbits NSD (one key per device). The distinguishing feature is unlinkable-by-default multi-identity: one 12-word mnemonic backs up unlimited separate identities that cannot be correlated by an observer.
+Heartwood is a direct replacement for nsecBunker (no VPS required), an iOS-compatible alternative to Amber (Android-only), and a multi-identity alternative to LNbits NSD (one key per device). The distinguishing feature is unlinkable-by-default multi-identity: one seed on the hardware signer derives unlimited separate identities that cannot be correlated by an observer unless you deliberately prove the link.
 
 ## Getting Started
 
-Flash an SD card, plug in the Pi, wait 60 seconds:
+Two pieces: a hardware signer (an ESP32 running `heartwood-esp32`, with keys provisioned over USB via [Sapwood](https://sapwood.forgesworn.dev) or the offline `provision` CLI) and a bridge host (any small Linux box with a USB port and a network connection -- a Raspberry Pi Zero 2 W or similar).
+
+Install the bridge:
 
 ```bash
-git clone https://github.com/forgesworn/heartwood
-cd heartwood
-cargo build --release -p heartwood-device
-cd pi && bash setup.sh
-# Then read the .onion address:
-sudo cat /var/lib/tor/heartwood/hostname
+curl -sL https://github.com/forgesworn/heartwood/releases/latest/download/install.sh | sudo bash
 ```
 
-Scan the `.onion` address with any NIP-46 compatible Nostr client (Damus, Primal, Snort, Coracle, etc.) to pair.
+Point it at the signer's serial port and start it:
+
+```bash
+# /etc/systemd/system/heartwood-bridge.service
+#   Environment=HEARTWOOD_SERIAL_PORT=/dev/ttyUSB0
+sudo systemctl start heartwood-bridge
+```
+
+The `bridge.secret` file -- written onto the box over USB by Sapwood or the `provision` CLI -- must be present in `HEARTWOOD_DATA_DIR` (default `/var/lib/heartwood`) before the bridge will start. See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the full walkthrough, including Docker.
+
+Pair a Nostr client with the `bunker://` connection string shown in Sapwood. There is no web UI or QR code served by this repo; pairing and per-client permissions are configured on the device itself.
 
 ## Key Concepts
 
-- **TreeRoot** — the master secret derived from a 12-word BIP-39 mnemonic at path `m/44'/1237'/727'/0'/0'`. Never leaves the device.
+- **TreeRoot** — the master secret derived from a 12-word BIP-39 mnemonic at path `m/44'/1237'/727'/0'/0'`. Lives only on the hardware signer.
 - **Identity** — a child key derived from TreeRoot via HMAC-SHA256 keyed on `(purpose, index)`. Each purpose/index pair produces a deterministic, unique keypair.
 - **Persona** — a named identity at `nostr:persona:{name}`. Convenience wrapper around `derive(root, "nostr:persona:{name}", index)`.
-- **NIP-46** — the Nostr remote signing protocol. Heartwood implements the full standard method set plus Heartwood-specific extension methods.
+- **NIP-46** — the Nostr remote signing protocol used to pair clients with the hardware signer. Method dispatch, permissions, and session handling happen on the device (firmware in `heartwood-esp32`), not in this repo.
 - **Linkage proof** — a BIP-340 Schnorr signature from the master key proving ownership of a child key, without revealing the derivation path (blind) or with it revealed (full).
 
 ## API Surface (Rust crates)
 
-### heartwood-core
+### heartwood-core (crate name `nsec-tree-rs`)
 
 ```rust
-use heartwood_core::{from_mnemonic, from_nsec, npub_from_nsec, derive,
-                     derive_from_identity, derive_persona, derive_from_persona,
-                     create_blind_proof, create_full_proof, verify_proof,
-                     recover, encode_npub, encode_nsec, decode_npub, decode_nsec};
+use nsec_tree_rs::{from_mnemonic, from_nsec, npub_from_nsec, derive,
+                   derive_from_identity, derive_persona, derive_from_persona,
+                   create_blind_proof, create_full_proof, verify_proof,
+                   recover, encode_npub, encode_nsec, decode_npub, decode_nsec};
 
 // Create a root from a 12-word mnemonic
 let root = from_mnemonic("word1 word2 ... word12", None)?;
 
 // Derive a child identity
 let identity = derive(&root, "social", 0)?;
-println!("{}", identity.npub); // npub1...
-println!("{}", identity.nsec); // nsec1...
+println!("{}", identity.npub);   // npub1...
+println!("{}", identity.nsec()); // nsec1...
 
 // Derive a named persona
 let persona = derive_persona(&root, "work", None)?;
 
 // Derive a sub-identity from an existing identity
-let sub = derive_from_identity(&root, &identity, "notifications", 0)?;
+let sub = derive_from_identity(&identity, "notifications", 0)?;
 
 // Derive a sub-identity from a persona
-let sub = derive_from_persona(&root, &persona, "dms", 0)?;
+let sub = derive_from_persona(&persona, "dms", None)?;
 
 // Get the npub for a bare nsec (bunker mode -- no tree derivation)
 let npub = npub_from_nsec("nsec1...")?;
@@ -69,75 +76,43 @@ assert!(verify_proof(&proof)?);
 let found = recover(&root, &["social".to_string(), "work".to_string()], None)?;
 ```
 
-### heartwood-nip46 (NIP-46 method types)
-
-```rust
-use heartwood_nip46::methods::{Nip46Request, Nip46Response};
-use heartwood_nip46::server::HeartwoodServer;
-use heartwood_nip46::permissions::ClientPermissions;
-use heartwood_nip46::session::{ClientSession, SessionManager};
-
-// Standard NIP-46 methods
-// GetPublicKey, SignEvent, Nip44Encrypt, Nip44Decrypt, Nip04Encrypt, Nip04Decrypt
-
-// Heartwood extension methods
-// HeartwoodDerive, HeartwoodDerivePersona, HeartwoodListIdentities,
-// HeartwoodSwitch, HeartwoodCreateProof, HeartwoodVerifyProof, HeartwoodRecover
-```
-
-### heartwood-device (binary, not a library)
-
-The `heartwood-device` crate is the device binary. It is not intended for use as a library dependency. Integrate via NIP-46 over the `.onion` address.
+This crate is a standalone reference/compatibility library now -- it is no longer a dependency of `heartwood-bridge` or of any binary in this repo. The same HMAC-SHA256 derivation scheme runs on-device, in the `heartwood-esp32` firmware.
 
 ## NIP-46 Integration (client side)
 
-Any NIP-46 client can connect to Heartwood. The connection string is a standard `nostrconnect://` URI served via the OLED display as a QR code.
+Any standard NIP-46 (Nostr Connect) client can pair with the hardware signer via the relay named in its `bunker://` or `nostrconnect://` URI -- Heartwood does not change the wire protocol clients speak. There is no Tor hidden service and no web UI; pairing, client approval, and per-client permissions are all configured on the device itself, normally via [Sapwood](https://sapwood.forgesworn.dev).
 
-**Nostr Connect URI format:**
-```
-nostrconnect://{signer-pubkey}?relay=wss://{relay}&secret={secret}&perms={kinds}
-```
-
-The Heartwood web UI is served as a Tor hidden service. NIP-46 traffic flows through the Nostr relay specified in the `nostrconnect://` URI; choosing a Tor-accessible relay keeps the signer transport off clearnet.
-
-**Compatible clients:** Tested with Nostr Connect clients across desktop and mobile (Damus, Primal, Snort, Coracle, Amethyst, and NDK-based apps).
+**Compatible clients:** any standard NIP-46 client. [Bark](https://github.com/forgesworn/bark) is a browser extension providing NIP-07 signing via Heartwood, built specifically for this stack.
 
 ## Security Properties
 
 - Keys derived via HMAC-SHA256 (RFC 2104) -- not BIP-32 extended keys at the child level
 - Master secret zeroed from RAM on drop (`zeroize` crate), intermediate secrets explicitly zeroised
-- Device password hashed with Argon2id before storage -- plaintext never persisted
-- Device reset requires current password confirmation in POST body (defence in depth)
-- Client approval required before the NIP-46 bunker signs for a new client pubkey
-- Per-client kind restrictions on sign_event (e.g. "client A may sign kind 1 but not kind 0")
-- Nsec filtering on all NIP-46 responses (private keys cannot leak through the protocol layer)
-- Session expiry (10 min idle), max 32 concurrent sessions, hex pubkey validation
-- Method-level permissions: privileged operations (derive, recover, create proof) require explicit client opt-in
-- Storage files written with 0600 permissions (owner-only); secure zero-overwrite on deletion
-- NIP-46 messages are NIP-44 encrypted end-to-end
-- Tor hidden service -- no clearnet exposure, no IP address, no port forwarding
-- Audit log persisted to disk as append-only JSON lines (1 MiB cap with rotation, 0600 permissions)
-- No cross-origin API access (CORS removed; all UI requests are same-origin)
-- AES-256-GCM encrypted storage with Argon2id key derivation from device PIN
-- Per-client rate limiting in both Rust server (60 req/min) and JS bunker (30 req/min)
-- Lock middleware: 423 response on most endpoints until PIN unlock
-- 137 tests including frozen protocol vectors cross-validated against TypeScript reference implementation
+- The bridge holds no key material and never sees plaintext -- NIP-44 decryption, NIP-46 dispatch, and signing all happen on the USB-tethered hardware signer, not the bridge
+- Per-client kind restrictions, connection approval, and rate limiting are enforced on the device
+- Session handling and replay protection for requests are the device's responsibility, not the bridge's
+- NIP-46 messages are NIP-44 encrypted end-to-end between client and device
+- `bridge.secret` authenticates the USB serial session only -- it is not a signing key; treat the file as a local secret (0600 permissions)
+- No inbound listener -- the bridge only makes outbound WebSocket connections to relays; no open ports, no Tor hidden service
+- NIP-42 AUTH is unsupported -- the bridge holds no key, so it cannot sign an auth challenge
+- 59 tests in heartwood-core (`nsec-tree-rs`), including 5 frozen protocol vectors cross-validated against the TypeScript reference implementation
 
 ## Competitors
 
-| Project | Platform | Multi-identity | Tor | Hardware |
-|---------|----------|---------------|-----|----------|
-| **Heartwood** | Raspberry Pi | Yes (unlimited, unlinkable) | Default | Yes |
-| nsecBunker | VPS/server | No | Optional | No |
-| Amber | Android only | No | No | No |
-| nsec.app | Browser extension | No | No | No |
-| LNbits NSD | Raspberry Pi | One key only | No | Yes |
+| Project | Platform | Multi-identity | Hardware |
+|---------|----------|---------------|----------|
+| **Heartwood** | Hardware signer + bridge | Yes (unlimited, unlinkable) | Yes |
+| nsecBunker | VPS/server | No | No |
+| Amber | Android only | No | No |
+| nsec.app | Browser extension | No | No |
+| LNbits NSD | Raspberry Pi | One key only | Yes |
 
 ## Ecosystem
 
 - [nsec-tree](https://github.com/forgesworn/nsec-tree) — TypeScript reference implementation of the derivation protocol
 - [shamir-words](https://github.com/forgesworn/shamir-words) — mnemonic threshold backup (Phase 2 integration)
 - [canary-kit](https://github.com/forgesworn/canary-kit) — dead man's switch (pairs with Heartwood duress persona)
+- [bark](https://github.com/forgesworn/bark) — browser extension for NIP-07 signing via Heartwood
 - [bray](https://github.com/forgesworn/bray) — Nostr MCP server (AI agents sign through Heartwood)
 
 ## Source

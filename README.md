@@ -3,15 +3,17 @@
 [![CI](https://github.com/forgesworn/heartwood/actions/workflows/ci.yml/badge.svg)](https://github.com/forgesworn/heartwood/actions/workflows/ci.yml)
 [![GitHub Sponsors](https://img.shields.io/github/sponsors/TheCryptoDonkey?logo=githubsponsors&color=ea4aaa&label=Sponsor)](https://github.com/sponsors/TheCryptoDonkey)
 
-Open-source Nostr signing software built on [nsec-tree](https://github.com/forgesworn/nsec-tree). Runs on any cheap ARM Linux board: Raspberry Pi Zero 2 W, Orange Pi Zero, Rock Pi S, Banana Pi M2 Zero, or a repurposed Android phone running postmarketOS. Holds your master identity on a dedicated device, derives unlimited unlinkable personas, signs events via NIP-46 over Nostr relays, reachable from anywhere with no open ports. Private keys never leave the device.
+Open-source Nostr signing built on [nsec-tree](https://github.com/forgesworn/nsec-tree). **`heartwood-bridge` is a headless, keyless daemon**: it connects Nostr relays to a USB-tethered hardware signer, so your private keys live on dedicated hardware and never touch a networked computer. The bridge holds no key material and never sees plaintext — every operation (NIP-44 decryption, request handling, signing) happens *on the device*, inline over USB. The bridge is just the device's relay connection, and nothing more.
+
+The hardware signer is an ESP32 running the [heartwood-esp32](https://github.com/forgesworn/heartwood-esp32) firmware. Most people configure it over USB with [Sapwood](https://sapwood.forgesworn.dev); the air-gapped, no-browser path uses the `provision` CLI. The software-only signer (keys in a browser) lives at [lite.mysignet.app](https://lite.mysignet.app), not here.
 
 ## What it does
 
-- **One mnemonic, all identities.** 12 words recover everything.
-- **NIP-46 remote signing.** Compatible with Nostr Connect clients across desktop and mobile.
-- **Reachable from anywhere, no open ports.** NIP-46 is relay-mediated: the signer connects out to Nostr relays, so there's no port forwarding, no router configuration, and your IP is never exposed to client apps. An optional Tor hidden service for the web management UI is available (off by default).
-- **Per-client permissions.** Control which event kinds each paired app can sign.
-- **Unlinkable personas.** Derive separate identities for work, personal, anon. Nobody can link them unless you prove it.
+- **Keys stay on hardware, always.** The bridge is a dumb pipe — no seed, no PIN, no plaintext ever lives on the Linux box.
+- **NIP-46 remote signing.** Compatible with Nostr Connect clients across desktop and mobile; the device answers, the bridge relays.
+- **Reachable from anywhere, no open ports.** NIP-46 is relay-mediated: the bridge connects *out* to Nostr relays, so there's no port forwarding, no inbound listener, and your IP is never exposed to client apps.
+- **Per-client permissions.** Control which event kinds each paired app can sign — enforced on the device.
+- **Unlinkable personas.** One seed on the device derives unlimited separate identities (work, personal, anon). Nobody can link them unless you prove it.
 
 ## How it compares
 
@@ -26,46 +28,44 @@ Open-source Nostr signing software built on [nsec-tree](https://github.com/forge
 
 ## Hardware
 
-Minimum bar: any ARMv7 or aarch64 Linux board with 256MB+ RAM and ~200MB storage. No soldering, no custom silicon, just an SD card to flash and a power supply.
+Two pieces:
 
-Two reference targets:
+- **The signer** — an ESP32 running the [heartwood-esp32](https://github.com/forgesworn/heartwood-esp32) firmware. This holds the keys. Provision it over USB with [Sapwood](https://sapwood.forgesworn.dev), or offline with the `provision` CLI.
+- **The bridge host** — any cheap ARMv7/aarch64 Linux board (Raspberry Pi Zero 2 W, Orange Pi Zero, or similar) with a USB port for the signer. It runs `heartwood-bridge` and holds nothing sensitive. Multi-arch binaries ship for aarch64, x86_64, armv7 and riscv64.
 
-| | Raspberry Pi Zero 2 W | Orange Pi Zero |
-|---|:-:|:-:|
-| Architecture | aarch64 (64-bit) | ARMv7 (32-bit) |
-| RAM | 512MB | 256-512MB |
-| Price | ~GBP 15 | ~GBP 25 |
-| OS | Raspberry Pi OS Lite (64-bit) | Armbian |
-
-Other working boards: Banana Pi M2 Zero, Rock Pi S, Le Potato, or any ARMv7/aarch64 Linux board with 256MB+ RAM. Old Android phones running postmarketOS also work.
-
-You'll also need a micro SD card (8GB+) and a power supply for whatever board you pick. Total for a Pi Zero 2 W setup: ~GBP 24.
+The bridge host only needs a USB port and an outbound network connection — no display, no inbound ports.
 
 ## Quick start
 
-On an ARM Linux board (Raspberry Pi OS Lite, Armbian, or other Debian-based ARM Linux — Pi is the production-verified path today, Armbian and postmarketOS support is in active development):
+Install the bridge on your Linux/Pi box (systemd service):
 
 ```bash
 curl -sL https://github.com/forgesworn/heartwood/releases/latest/download/install.sh | sudo bash
 ```
 
-Then open `http://<hostname>.local:3000` in your browser and follow the setup wizard. See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the full walkthrough.
+Point it at your USB signer and start it:
+
+```bash
+# in /etc/systemd/system/heartwood-bridge.service (or via Docker -e):
+#   Environment=HEARTWOOD_SERIAL_PORT=/dev/ttyUSB0
+sudo systemctl start heartwood-bridge
+```
+
+The `bridge.secret` is provisioned onto the box over USB (Sapwood or the `provision` CLI) before first start. See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the full walkthrough, including Docker.
 
 Build from source instead:
 
 ```bash
 git clone https://github.com/forgesworn/heartwood && cd heartwood
-cargo build --release -p heartwood-device
-cd bunker && npm install && cd ..
-cd boards/pi && sudo bash setup.sh
+cargo build --release -p heartwood-bridge
 ```
 
 ## Development
 
 ```bash
-cargo test                    # Run all tests
-cargo test -p heartwood-core  # Core crypto tests only
-cargo run -p heartwood-device # Run device binary (terminal mode)
+cargo test                     # Run all tests
+cargo test -p heartwood-core   # Core derivation tests only
+cargo run -p heartwood-bridge -- --help
 ```
 
 ## Architecture
@@ -73,11 +73,9 @@ cargo run -p heartwood-device # Run device binary (terminal mode)
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full internal architecture with diagrams.
 
 ```
-heartwood-core     Pure crypto: nsec-tree derivation, signing, proofs, personas
-heartwood-nip46    NIP-46 protocol: method dispatch, permissions, sessions
-heartwood-frame    Serial frame codec (magic/type/len/CRC-32) shared by device + bridge, pinned to the firmware's wire format
-heartwood-device   Device binary: web UI, storage, optional OLED, optional Tor (web UI)
-heartwood-bridge   Relay-to-serial signing bridge: HSM mode's data plane over USB
+heartwood-bridge   The product: headless, keyless relay-to-USB signing daemon
+heartwood-frame    Serial frame codec (magic/type/len/CRC-32), pinned to the firmware's wire format
+heartwood-core     nsec-tree derivation primitive (nsec-tree-rs) — standalone reference library
 ```
 
 ## Ecosystem

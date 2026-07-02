@@ -13,67 +13,55 @@ graph LR
 
     Relay["Nostr Relays"]
 
-    HW["Heartwood"]
+    Bridge["heartwood-bridge<br/>(keyless daemon)"]
+
+    HW["Hardware signer<br/>(heartwood-esp32 firmware)"]
 
     Clients -->|"NIP-46<br/>(bunker URI)"| Relay
-    Relay -->|"NIP-46"| HW
+    Relay -->|"NIP-46"| Bridge
+    Bridge -->|"USB serial"| HW
 
-    Sapwood["Sapwood"] -.->|"Web Serial / HTTP"| HW
+    Sapwood["Sapwood"] -.->|"Web Serial (USB)"| HW
 
     style Bark fill:#3b82f6,color:#fff
     style AG fill:#3b82f6,color:#fff
     style Relay fill:#8b5cf6,color:#fff
-    style HW fill:#f59e0b,color:#000
+    style Bridge fill:#f59e0b,color:#000
+    style HW fill:#ef4444,color:#fff
     style Sapwood fill:#3b82f6,color:#fff
 ```
 
-Any NIP-46 client can connect to Heartwood via a bunker URI. Bark provides `window.nostr` for browser apps. Agents like bray connect directly. The client doesn't need to know what's behind the bunker URI.
+Any NIP-46 client can connect to the hardware signer via a bunker URI. Bark provides `window.nostr` for browser apps. Agents like bray connect directly. The client doesn't need to know what's behind the bunker URI: `heartwood-bridge` listens on the relays and pumps ciphertext to and from the USB-tethered signer, never holding key material or seeing plaintext itself.
 
-**Heartwood** is a signing appliance. It stores your master secret, derives child identities via nsec-tree, and signs events with BIP-340 Schnorr. Three deployment tiers from the same codebase:
+**heartwood-bridge** is a headless, keyless daemon -- this repo's product. It connects to Nostr relays, forwards NIP-46 requests over USB to the hardware signer, and republishes whatever the signer signs. It runs no web server, opens no inbound ports, and stores no key material; a fully compromised bridge host cannot extract keys or forge signatures. The serial wire format (magic/type/length/CRC-32) is implemented once in the shared `heartwood-frame` crate, so the bridge's codec can't drift from what it sends over USB.
 
-```mermaid
-graph LR
-    subgraph Soft["Soft"]
-        S_PI["Pi standalone<br/>Argon2id keyfile"]
-    end
+| Component | Key material | Signing | Attack surface |
+|-----------|--------------|---------|-----------------|
+| **heartwood-bridge** | None -- forwards NIP-44 ciphertext only | Never signs; pumps requests to the signer | Bridge compromise = no key access |
+| **Hardware signer** | Master secret in NVS | Signs locally, physical button required for out-of-policy requests | Requires physical access to the device |
 
-    subgraph Hard["Hard"]
-        H_PI["Pi bridge<br/>(zero trust)"]
-        H_ESP["ESP32 HSM<br/>(master secrets)"]
-    end
+**Sapwood** (sapwood.forgesworn.dev) is a browser-based flasher and admin console. It provisions master identities, manages TOFU client policies, flashes firmware, and monitors logs -- all over Web Serial (USB), talking directly to the hardware signer. 21 KB gzipped.
 
-    H_PI <-->|"USB serial"| H_ESP
+**nsec-tree** is the cryptographic foundation. A deterministic key derivation library that creates unlimited child identities from a single seed using HMAC-SHA256. Implemented in TypeScript (npm) and Rust (`heartwood-core` / `nsec-tree-rs`), kept in this repo as a standalone reference library -- `heartwood-bridge` never touches key material, so it doesn't depend on it. The hardware signer firmware (in the separate `heartwood-esp32` repo) performs the same derivation on-device.
 
-    style S_PI fill:#f59e0b,color:#000
-    style H_PI fill:#f59e0b,color:#000
-    style H_ESP fill:#ef4444,color:#fff
-```
-
-| Tier | Key material | Signing | Attack surface |
-|------|-------------|---------|----------------|
-| **Soft** | Encrypted on Pi (AES-256-GCM + Argon2id) | Pi signs | Pi compromise = key at risk |
-| **Hard** | On ESP32 only, Pi is zero-trust | ESP32 signs, Pi relays ciphertext | Pi compromise = no key access |
-
-**Sapwood** is a browser-based management UI. Provisions master identities, manages TOFU client policies, uploads firmware, monitors logs. Connects via Web Serial (USB) or HTTP (bridge on the Pi). 21 KB gzipped.
-
-**nsec-tree** is the cryptographic foundation. A deterministic key derivation library that creates unlimited child identities from a single seed using HMAC-SHA256. Implemented in TypeScript (npm) and Rust (heartwood-core).
+A software-only signer -- keys held in a browser or server rather than dedicated hardware -- lives at [lite.mysignet.app](https://lite.mysignet.app). It's a separate product and out of scope for this repo.
 
 ## TOFU client approval
 
-When a new NIP-46 client connects to Heartwood for the first time, it isn't automatically trusted. The device holds a connection slot table with per-client policies:
+When a new NIP-46 client connects for the first time, it isn't automatically trusted. The hardware signer holds a connection slot table with per-client policies, enforced entirely on-device:
 
 - **Auto-approve:** trusted clients sign without prompting
-- **Ask:** the device web UI shows an approval prompt for out-of-policy requests
+- **Ask:** out-of-policy requests block for a physical button press on the signer (up to ~45 seconds)
 - **Kind restrictions:** per-client allowlists for which event kinds can be signed
 - **Rate limiting:** 60 requests/minute per client
 
-First connection requires approval (TOFU). After that, the client's pubkey is remembered and policies apply. Revoking a client removes it from the slot table.
+First connection requires approval (TOFU). After that, the client's pubkey is remembered and policies apply. Revoking a client removes it from the slot table. `heartwood-bridge` never sees or enforces any of this -- it only pumps ciphertext and de-duplicates requests across relays; every policy decision happens on the device.
 
 ---
 
 ## Setting up for the first time
 
-Provisioning a Heartwood device takes about five minutes. You generate or import a master identity, derive personas for different contexts, and connect Bark.
+Provisioning a hardware signer takes about five minutes. You generate or import a master identity, derive personas for different contexts, and connect Bark.
 
 ```mermaid
 sequenceDiagram
@@ -81,23 +69,24 @@ sequenceDiagram
         participant S as Sapwood
         participant B as Bark
     end
-    box rgb(249, 158, 11) Signing Device
-        participant HW as Heartwood
+    box rgb(239, 68, 68) Hardware Signer
+        participant HW as ESP32
     end
 
     actor U as User
     participant WA as Web App
 
-    U->>S: Connect via USB or HTTP
+    U->>S: Connect via USB (Web Serial)
     S->>HW: Provision master identity
-    Note over HW: Encrypt and store root secret
+    Note over HW: Store root secret in NVS
     HW-->>S: ACK
 
-    U->>HW: Derive personas via web UI
+    U->>S: Derive personas
+    S->>HW: Derive persona
     Note over HW: personal, work, bitcoiner...
 
     U->>B: Install extension, enter bunker URI
-    B->>HW: NIP-46 connect (via relay)
+    B->>HW: NIP-46 connect (via relay + heartwood-bridge)
     HW-->>B: Connected
 
     U->>WA: Browse to any Nostr app
@@ -105,21 +94,20 @@ sequenceDiagram
     Note over U,WA: Ready to sign
 ```
 
-Three provisioning modes are available:
+Two provisioning paths are available:
 
-| Mode | Input | Key storage | Use case |
+| Path | Input | Key storage | Use case |
 |------|-------|-------------|----------|
-| **Tree (mnemonic)** | 12/24-word BIP-39 seed | Derived root on device | New master identity from scratch |
-| **Tree (nsec)** | Existing nsec | HMAC-derived root on device | Existing Nostr identity |
-| **HSM** | Mnemonic or nsec via Sapwood | Secret on ESP32 only | Maximum isolation |
+| **Sapwood (Web Serial)** | 12/24-word BIP-39 mnemonic or existing nsec | Derived/HMAC root in ESP32 NVS | Everyday setup from a browser |
+| **`provision` CLI (heartwood-esp32, air-gapped)** | 12/24-word BIP-39 mnemonic or existing nsec | Same on-device storage | Offline, high-security provisioning -- no browser, no network |
 
-In all modes, the private key never touches a general-purpose computer.
+In both paths, the private key is written straight into the hardware signer's own storage and never touches a general-purpose computer.
 
 ---
 
 ## Signing an event
 
-When a web app calls `window.nostr.signEvent()`, the request travels through Bark's message chain, across a Nostr relay, into Heartwood, and back with a signature. The private key never leaves the device.
+When a web app calls `window.nostr.signEvent()`, the request travels through Bark's message chain, across a Nostr relay, through `heartwood-bridge` over USB, into the hardware signer, and back with a signature. The private key never leaves the device.
 
 ```mermaid
 sequenceDiagram
@@ -131,9 +119,10 @@ sequenceDiagram
     end
     box rgb(139, 92, 246) Network
         participant R as Nostr Relay
+        participant BR as heartwood-bridge
     end
-    box rgb(249, 158, 11) Signing Device
-        participant HW as Heartwood
+    box rgb(239, 68, 68) Hardware Signer
+        participant HW as ESP32
     end
 
     WA->>P: signEvent(event)
@@ -147,20 +136,22 @@ sequenceDiagram
     end
 
     BG->>R: NIP-46 sign_event (NIP-44 encrypted)
-    R->>HW: Forward request
+    R->>BR: Forward request (kind:24133)
+    BR->>HW: ENCRYPTED_REQUEST (USB serial)
 
-    Note over HW: Permission check, rate limit
+    Note over HW: Permission check, rate limit, TOFU
     Note over HW: Resolve active identity
     Note over HW: BIP-340 Schnorr sign
 
-    HW->>R: NIP-46 response (NIP-44 encrypted)
+    HW->>BR: SIGN_ENVELOPE_RESPONSE (signed event)
+    BR->>R: Publish signed response
     R->>BG: Forward response
     BG->>CS: Response
     CS->>P: postMessage
     P->>WA: Signed event
 ```
 
-All relay traffic is NIP-44 encrypted (XChaCha20 + HMAC-SHA256). Heartwood enforces per-client permissions (kind allowlists, method restrictions) and rate limits (60 requests/minute). Requests have a 60-second timeout to allow for physical approval on hardware devices.
+All relay traffic is NIP-44 encrypted (XChaCha20 + HMAC-SHA256). The hardware signer enforces per-client permissions (kind allowlists, method restrictions) and rate limits (60 requests/minute). Requests have a 60-second timeout to allow for physical approval on the device.
 
 The nsec is never included in any response. Only signatures and public keys leave the device.
 
@@ -170,44 +161,18 @@ The nsec is never included in any response. Only signatures and public keys leav
 
 The most important question for any signing architecture: where is the key material?
 
-### Soft tier (Pi standalone)
-
-The master secret is encrypted at rest on the Pi's SD card with AES-256-GCM + Argon2id. It's only decrypted into memory when the device is unlocked via PIN entry in the web UI.
+The host running `heartwood-bridge` stores nothing and only ever sees NIP-44 ciphertext. The hardware signer (ESP32, running `heartwood-esp32` firmware) holds the master secret in NVS, handles all cryptography, and requires a physical button press to sign out-of-policy requests. Even a fully compromised bridge host cannot extract keys or forge signatures.
 
 ```mermaid
 graph TB
-    M["Mnemonic or nsec"] -->|"nsec-tree derivation"| TR["Tree Root (32 bytes)"]
-    TR -->|"AES-256-GCM + Argon2id"| EF["Encrypted file on SD card"]
-    PIN["PIN unlock"] -->|"Decrypt to memory"| MEM["Secret in memory"]
-    MEM -->|"Sign events"| SIG["Signatures out"]
-    MEM -->|"Lock / shutdown"| Z["Zeroised"]
-    EF -.->|"On unlock"| MEM
-
-    style M fill:#1e293b,color:#e2e8f0
-    style TR fill:#1e293b,color:#e2e8f0
-    style EF fill:#f59e0b,color:#000
-    style PIN fill:#3b82f6,color:#fff
-    style MEM fill:#ef4444,color:#fff
-    style SIG fill:#16c79a,color:#000
-    style Z fill:#ef4444,color:#fff
-```
-
-All secrets in memory are wrapped in zeroising containers and overwritten on lock or shutdown.
-
-### Hard tier (Pi + ESP32 HSM)
-
-The Pi stores nothing and only sees NIP-44 ciphertext. The ESP32 holds the master secret in NVS, handles all cryptography, and requires a physical button press to sign. Even a fully compromised Pi cannot extract keys or forge signatures.
-
-```mermaid
-graph TB
-    M["Mnemonic or nsec"] -->|"Sapwood provisions via USB"| ESP["ESP32 NVS storage"]
-    HW["Heartwood on RPi"] -->|"Serial frame"| ESP
-    ESP -->|"Signs locally"| SIG["Signature returned to RPi"]
-    BTN["Physical button"] -.->|"Required for"| PROV["Provision / Reset / OTA"]
+    M["Mnemonic or nsec"] -->|"Sapwood or provision CLI, via USB"| ESP["ESP32 NVS storage"]
+    BR["heartwood-bridge"] -->|"Serial frame (heartwood-frame codec)"| ESP
+    ESP -->|"Signs locally"| SIG["Signature returned to bridge"]
+    BTN["Physical button"] -.->|"Required for"| PROV["Provision / Reset / OTA / sign approval"]
 
     style M fill:#1e293b,color:#e2e8f0
     style ESP fill:#ef4444,color:#fff
-    style HW fill:#f59e0b,color:#000
+    style BR fill:#f59e0b,color:#000
     style SIG fill:#16c79a,color:#000
     style BTN fill:#ef4444,color:#fff
 ```
@@ -249,7 +214,7 @@ graph TB
 | Persona key | That persona and its groups | New persona index, publish blind proof |
 | Master seed | Everything | New mnemonic, migrate all identities |
 
-Bark's popup UI lets you switch between personas and derive new ones without leaving the browser. The active identity is managed by Heartwood, so switching is instant and consistent across all connected apps.
+Bark's popup UI lets you switch between personas and derive new ones without leaving the browser. The active identity is managed by the hardware signer, so switching is instant and consistent across all connected apps.
 
 ---
 
@@ -257,9 +222,10 @@ Bark's popup UI lets you switch between personas and derive new ones without lea
 
 | Component | Role | Language | Architecture |
 |-----------|------|----------|--------------|
-| [Heartwood](https://github.com/forgesworn/heartwood) | Dedicated signing device | Rust | [ARCHITECTURE.md](../ARCHITECTURE.md) |
+| [heartwood](https://github.com/forgesworn/heartwood) (`heartwood-bridge`) | Keyless relay-to-USB signing daemon | Rust | [ARCHITECTURE.md](../ARCHITECTURE.md) |
+| [heartwood-esp32](https://github.com/forgesworn/heartwood-esp32) | Hardware signer firmware (USB-tethered ESP32/ESP8266) | Rust | [architecture.md](https://github.com/forgesworn/heartwood-esp32/blob/main/docs/architecture.md) |
 | [Bark](https://github.com/forgesworn/bark) | Browser extension (NIP-07) | JavaScript | [ARCHITECTURE.md](https://github.com/forgesworn/bark/blob/main/ARCHITECTURE.md) |
-| [Sapwood](https://github.com/forgesworn/sapwood) | Device management UI | TypeScript / Svelte | [ARCHITECTURE.md](https://github.com/forgesworn/sapwood/blob/main/ARCHITECTURE.md) |
+| [Sapwood](https://github.com/forgesworn/sapwood) | Web flasher / admin console | TypeScript / Svelte | [ARCHITECTURE.md](https://github.com/forgesworn/sapwood/blob/main/ARCHITECTURE.md) |
 | [nsec-tree](https://github.com/forgesworn/nsec-tree) | Key derivation library | TypeScript | [ARCHITECTURE.md](https://github.com/forgesworn/nsec-tree/blob/main/ARCHITECTURE.md) |
 
 **Ecosystem-adjacent libraries** that build on nsec-tree:
