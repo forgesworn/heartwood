@@ -63,7 +63,7 @@ cd boards/pi && sudo bash setup.sh
 ## Development
 
 ```bash
-cargo test                    # Run all tests (55)
+cargo test                    # Run all tests
 cargo test -p heartwood-core  # Core crypto tests only
 cargo run -p heartwood-device # Run device binary (terminal mode)
 ```
@@ -75,7 +75,9 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full internal architecture with d
 ```
 heartwood-core     Pure crypto: nsec-tree derivation, signing, proofs, personas
 heartwood-nip46    NIP-46 protocol: method dispatch, permissions, sessions
+heartwood-frame    Serial frame codec (magic/type/len/CRC-32) shared by device + bridge, pinned to the firmware's wire format
 heartwood-device   Device binary: web UI, storage, optional OLED, optional Tor (web UI)
+heartwood-bridge   Relay-to-serial signing bridge: HSM mode's data plane over USB
 ```
 
 ## Ecosystem

@@ -10,18 +10,23 @@ The repo has three runtime components: a Rust binary (`heartwood-device`), a Nod
 
 ## Hexagonal architecture
 
-The Rust workspace follows hexagonal architecture. Dependencies flow inward only: adapters depend on ports, ports depend on the domain core. The core has no I/O, no async, no network -- pure cryptography. The port layer translates NIP-46 protocol concerns without touching storage or the network. Adapters (the device binary and the bunker sidecar) own all I/O.
+The Rust workspace follows hexagonal architecture. Dependencies flow inward only: adapters depend on ports, ports depend on the domain core. The core has no I/O, no async, no network -- pure cryptography. The port layer translates NIP-46 protocol concerns without touching storage or the network. Adapters (the device binary, the bunker sidecar, and the `heartwood-bridge` sidecar) own all I/O. `heartwood-bridge` sits outside the hexagon proper: it never calls into `heartwood-nip46` or `heartwood-core`, since the USB-tethered device does its own signing. `heartwood-frame` is a small shared utility crate (the serial wire codec) used by both `heartwood-device` and `heartwood-bridge` -- not a layer, just code neither should duplicate.
 
 ```mermaid
 graph TB
-    subgraph ADAPTERS["Adapters - heartwood-device + bunker"]
+    subgraph ADAPTERS["Adapters - heartwood-device + bunker + heartwood-bridge"]
         WEB["Web UI + HTTP API"]
         BUNKER["Bunker sidecar<br/>(Node.js, relay-facing)"]
         TOR["Tor hidden service"]
         STORE["Encrypted storage<br/>(AES-256-GCM + Argon2id)"]
         OLED["OLED display<br/>(SSD1306)"]
-        SERIAL["Serial port<br/>(ESP32 HSM)"]
+        SERIAL["Serial port<br/>(ESP32 HSM, device binary)"]
+        BRIDGE["heartwood-bridge<br/>(relay ⇄ serial pump, HSM mode)"]
         AUDIT["Audit log<br/>(1000-entry ring buffer)"]
+    end
+
+    subgraph SHARED["Shared - heartwood-frame"]
+        FRAME["Serial frame codec<br/>(magic/type/len/CRC-32)"]
     end
 
     subgraph PORTS["Ports - heartwood-nip46"]
@@ -40,6 +45,8 @@ graph TB
 
     WEB -->|adapter → port| SERVER
     BUNKER -->|adapter → port| SERVER
+    SERIAL -->|shared codec| FRAME
+    BRIDGE -->|shared codec| FRAME
     SERVER --> SESS
     SERVER --> PERMS
     SERVER --> ENC
@@ -52,8 +59,10 @@ graph TB
     style TOR fill:#8b5cf6,color:#fff
     style STORE fill:#ef4444,color:#fff
     style SERIAL fill:#ef4444,color:#fff
+    style BRIDGE fill:#8b5cf6,color:#fff
     style OLED fill:#f59e0b,color:#000
     style AUDIT fill:#f59e0b,color:#000
+    style FRAME fill:#64748b,color:#fff
     style SERVER fill:#1e293b,color:#e2e8f0
     style SESS fill:#1e293b,color:#e2e8f0
     style PERMS fill:#1e293b,color:#e2e8f0
@@ -115,7 +124,10 @@ Per-client granularity:
   audit.log             # Append-only request log
   tor-hostname          # .onion address
   bunker-uri.txt        # NIP-46 connection string
+  bunker-uris.json      # Per-identity bunker URIs: [{label, pubkey, npub, uri}]
 ```
+
+`bunker-uris.json` is written by the bunker sidecar (`writeBunkerUris` in `bunker/index.mjs`) every time relays or personas change: one entry for the master identity and one for each derived persona, each with its own `bunker://` URI. `heartwood-device`'s `GET /api/identities` reads this file to serve the web UI's per-identity list (copy, QR, auto-approve); `bunker-uri.txt` keeps only the master URI, for the existing `/api/status` consumer.
 
 Multiple instances supported via systemd template units: `heartwood@personal.service`, `heartwood@work.service`.
 

@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- **`heartwood-bridge`** — relay-to-serial signing bridge for HSM mode: a sidecar daemon that pumps NIP-46 requests between Nostr relays and a USB-tethered ESP32/ESP8266 signing device over `ENCRYPTED_REQUEST` (0x10) / `SIGN_ENVELOPE_RESPONSE` (0x35) frames; all cryptography happens inline on the device, so the bridge never holds key material or sees plaintext; ships with a `heartwood-bridge@.service` systemd unit
+- **`heartwood-frame`** — shared serial frame codec crate (magic/type/length/CRC-32 framing), extracted from the duplicated copies in `heartwood-bridge` and `heartwood-device` so the wire format can no longer drift between them
+- **Per-identity bunker URIs** — the bunker sidecar resolves each NIP-46 request by its `#p` target, giving the master identity and every derived persona its own `bunker://` URI and signing key instead of one global active identity; sidecar writes `bunker-uris.json` (`[{label, pubkey, npub, uri}]`); device web UI adds `GET /api/identities` and `/api/identities/qr`, an Identities list with copy/QR/auto-approve links, and connection slots scoped to a chosen identity
+- Design note and threat model for the relay-serial bridge (`docs/2026-06-25-relay-serial-bridge.md`)
+- Expanded test coverage: a hardware-free end-to-end bridge test, `SerialSession` protocol and `read_frame` edge cases, the bridge's relay message handler, and a real-client interop test (`nostr-tools`'s `BunkerSigner` over a live relay) proving per-identity routing
+
+### Changed
+- Reachability documentation reframed as relay-mediated by default; Tor is opt-in and fronts only the web management UI
+- `Cargo.lock` now committed so the multi-arch Docker build resolves
+- Pre-commit hook and CI job enforcing the project's single allowed commit identity
+
+### Fixed
+- Bridge serial writes now paced in small chunks with a short delay between them — large NIP-46 frames arriving as one burst could overrun classic ESP32 boards' small UART receive buffers
+- `heartwood-device` web serial CRC excluded the 2-byte magic preamble (matching the firmware), fixing a wire-incompatible `/api/hsm/pin` path
+- `heartwood-device` serial `read_frame` payload offset corrected
+
 ## [0.6.0] - 2026-06-21
 
 ### Added
