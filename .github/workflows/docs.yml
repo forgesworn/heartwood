@@ -27,7 +27,7 @@ jobs:
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
 
       - name: Build documentation
-        run: cargo doc --no-deps -p nsec-tree-rs -p nip46-signer
+        run: cargo doc --no-deps -p nsec-tree-rs -p heartwood-frame
 
       - name: Add redirect to nsec-tree-rs
         run: echo '<meta http-equiv="refresh" content="0;url=nsec_tree_rs/index.html">' > target/doc/index.html
