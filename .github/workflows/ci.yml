@@ -91,3 +91,15 @@ jobs:
         with:
           components: rustfmt
       - run: cargo fmt --all -- --check
+
+  # Supply-chain gate: RUSTSEC advisories, licence allow-list, and source
+  # registries, all enforced against deny.toml. Closes the gap where the repo
+  # documented `cargo deny check` but never ran it in CI.
+  deny:
+    name: cargo-deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: EmbarkStudios/cargo-deny-action@d8395c1c8c9df74d968a3bcbba5533e396ff43cf # v2.0.9
+        with:
+          command: check advisories licenses sources bans

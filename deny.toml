@@ -12,6 +12,9 @@ allow = [
     "Unicode-DFS-2016",
     "CC0-1.0",
     "MPL-2.0",
+    # webpki-roots ships the Mozilla CA root store under CDLA-Permissive-2.0 —
+    # a permissive data licence, no copyleft obligation.
+    "CDLA-Permissive-2.0",
 ]
 
 [bans]
