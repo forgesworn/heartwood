@@ -95,11 +95,16 @@ jobs:
   # Supply-chain gate: RUSTSEC advisories, licence allow-list, and source
   # registries, all enforced against deny.toml. Closes the gap where the repo
   # documented `cargo deny check` but never ran it in CI.
+  #
+  # cargo-deny is installed fresh (not via the cargo-deny-action, whose bundled
+  # binary lags and fails to parse newly-published advisory-db entries) so the
+  # gate tracks the current advisory schema.
   deny:
     name: cargo-deny
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-      - uses: EmbarkStudios/cargo-deny-action@d8395c1c8c9df74d968a3bcbba5533e396ff43cf # v2.0.9
+      - uses: taiki-e/install-action@16b05812d776ae1dfaabc8277e421fb6d2506419 # v2
         with:
-          command: check advisories licenses sources bans
+          tool: cargo-deny
+      - run: cargo deny check advisories licenses sources bans
