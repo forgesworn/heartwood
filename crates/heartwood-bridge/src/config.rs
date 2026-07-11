@@ -6,14 +6,20 @@
 //! (`HEARTWOOD_DATA_DIR`, default `/var/lib/heartwood`), with environment
 //! overrides for the systemd/Docker case — no web UI involved. It reads:
 //!
-//!   - the **serial port** — `HEARTWOOD_SERIAL_PORT`, else `config.json`'s
+//!   - the **transport** — `HEARTWOOD_TRANSPORT`, else `config.json`'s
+//!     `transport` field, else `serial`. `serial` talks HW frames to an
+//!     ESP over USB; `ledger-tcp` talks APDUs to a Ledger running the
+//!     Heartwood app (Speculos, or a TCP↔HID proxy).
+//!   - the **device address** — `HEARTWOOD_SERIAL_PORT`, else `config.json`'s
 //!     `serial_port` field. Required; the bridge has nothing to talk to without
-//!     it.
+//!     it. A serial device path (`/dev/ttyUSB0`) for `serial`, a `host:port`
+//!     for `ledger-tcp`.
 //!   - the **relays** — `HEARTWOOD_RELAYS` (comma-separated), else
 //!     `config.json`'s `relays` array, else [`DEFAULT_RELAYS`].
 //!   - `bridge.secret` — the 32-byte serial bridge-session secret (64-char hex
 //!     or 32 raw bytes), the same value the `provision` CLI writes into the
-//!     device's NVS over USB.
+//!     device's NVS over USB. Serial only: a Ledger authenticates its user
+//!     (PIN) and gates signing on-device, so no session secret exists there.
 //!
 //! `config.json` (`{ "serial_port": "/dev/ttyUSB0", "relays": [...] }`) is a
 //! plain file the operator or the `provision` CLI writes — there is no
@@ -28,11 +34,24 @@ use serde_json::Value;
 pub const DEFAULT_RELAYS: &[&str] =
     &["wss://relay.damus.io", "wss://nos.lol", "wss://relay.trotters.cc"];
 
+/// How the bridge reaches the signing device.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Transport {
+    /// HW serial frames to an ESP32/ESP8266 over USB.
+    Serial,
+    /// APDUs to a Ledger running the Heartwood app, over Ledger's TCP framing.
+    LedgerTcp,
+}
+
 pub struct Config {
     pub data_dir: PathBuf,
+    pub transport: Transport,
+    /// Serial device path for [`Transport::Serial`]; `host:port` for
+    /// [`Transport::LedgerTcp`].
     pub serial_port: String,
     pub relays: Vec<String>,
-    pub bridge_secret: [u8; 32],
+    /// The serial session secret. `None` for [`Transport::LedgerTcp`].
+    pub bridge_secret: Option<[u8; 32]>,
 }
 
 impl Config {
@@ -42,10 +61,31 @@ impl Config {
                 .unwrap_or_else(|_| "/var/lib/heartwood".to_string()),
         );
         let file = read_config_json(&data_dir);
+        let transport = resolve_transport(&file)?;
         let serial_port = resolve_serial_port(&file)?;
         let relays = resolve_relays(&file);
-        let bridge_secret = read_bridge_secret(&data_dir)?;
-        Ok(Self { data_dir, serial_port, relays, bridge_secret })
+        let bridge_secret = match transport {
+            Transport::Serial => Some(read_bridge_secret(&data_dir)?),
+            Transport::LedgerTcp => None,
+        };
+        Ok(Self { data_dir, transport, serial_port, relays, bridge_secret })
+    }
+}
+
+/// Transport: `HEARTWOOD_TRANSPORT` env wins, else `config.json.transport`,
+/// else serial.
+fn resolve_transport(file: &Option<Value>) -> Result<Transport> {
+    let raw =
+        std::env::var("HEARTWOOD_TRANSPORT").ok().filter(|s| !s.trim().is_empty()).or_else(|| {
+            file.as_ref()
+                .and_then(|v| v.get("transport"))
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        });
+    match raw.as_deref().map(str::trim) {
+        None | Some("serial") => Ok(Transport::Serial),
+        Some("ledger-tcp") => Ok(Transport::LedgerTcp),
+        Some(other) => bail!("unknown transport '{other}' (expected 'serial' or 'ledger-tcp')"),
     }
 }
 

@@ -14,6 +14,7 @@ mod bridge;
 mod config;
 mod dedup;
 mod event;
+mod ledger;
 mod npub;
 mod relay;
 mod serial;
@@ -58,10 +59,13 @@ async fn main() -> Result<()> {
                      Headless relay-to-USB signing bridge. Holds no keys.\n\n\
                      Configuration (no flags):\n  \
                      HEARTWOOD_DATA_DIR      data dir (default /var/lib/heartwood)\n  \
-                     HEARTWOOD_SERIAL_PORT   signer serial port, e.g. /dev/ttyUSB0\n  \
+                     HEARTWOOD_TRANSPORT     'serial' (default) or 'ledger-tcp'\n  \
+                     HEARTWOOD_SERIAL_PORT   signer serial port (e.g. /dev/ttyUSB0),\n                          \
+                     or host:port of a Ledger APDU endpoint\n  \
                      HEARTWOOD_RELAYS        comma-separated relay list (optional)\n\n\
                      The bridge secret is read from <data dir>/bridge.secret\n\
-                     (provisioned over USB with the `provision` CLI).",
+                     (provisioned over USB with the `provision` CLI; serial only —\n\
+                     a Ledger gates signing on-device instead).",
                     env!("CARGO_PKG_VERSION")
                 );
                 return Ok(());
@@ -78,8 +82,9 @@ async fn main() -> Result<()> {
 
     let config = config::Config::load()?;
     tracing::info!(
-        "data dir {}, serial {}, relays [{}]",
+        "data dir {}, {:?} device {}, relays [{}]",
         config.data_dir.display(),
+        config.transport,
         config.serial_port,
         config.relays.join(", ")
     );

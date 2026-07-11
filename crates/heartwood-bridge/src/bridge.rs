@@ -1,19 +1,44 @@
-//! The serial worker.
+//! The device worker.
 //!
-//! Owns the single serial port on a dedicated OS thread (serial I/O is
-//! blocking), processes signing jobs strictly sequentially — the device
-//! handles one request at a time — and broadcasts each signed response to the
-//! relay tasks. On serial failure it reopens and re-authenticates, retrying
-//! forever; the bridge is useless without the device, so it simply waits.
+//! Owns the single device connection (serial port or Ledger APDU stream) on a
+//! dedicated OS thread (the I/O is blocking), processes signing jobs strictly
+//! sequentially — the device handles one request at a time — and broadcasts
+//! each signed response to the relay tasks. On connection failure it reopens
+//! and re-authenticates, retrying forever; the bridge is useless without the
+//! device, so it simply waits.
 
 use std::time::Duration;
 
 use anyhow::Result;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
-use crate::config::Config;
+use crate::config::{Config, Transport};
+use crate::ledger::LedgerSession;
 use crate::relay::RequestJob;
 use crate::serial::SerialSession;
+
+/// The two device back-ends behind one seam: same 0x10 body in, same signed
+/// envelope out.
+enum Session {
+    Serial(SerialSession),
+    Ledger(LedgerSession),
+}
+
+impl Session {
+    fn list_master_pubkeys(&mut self) -> Result<Vec<String>> {
+        match self {
+            Session::Serial(s) => s.list_master_pubkeys(),
+            Session::Ledger(s) => s.list_master_pubkeys(),
+        }
+    }
+
+    fn sign(&mut self, payload: &[u8]) -> Result<Option<String>> {
+        match self {
+            Session::Serial(s) => s.sign(payload),
+            Session::Ledger(s) => s.sign(payload),
+        }
+    }
+}
 
 const REOPEN_BACKOFF: Duration = Duration::from_secs(3);
 
@@ -80,13 +105,13 @@ pub fn spawn_serial_worker(
 }
 
 /// Open + authenticate, retrying forever with backoff.
-fn connect_blocking(config: &Config) -> SerialSession {
+fn connect_blocking(config: &Config) -> Session {
     loop {
         match try_connect(config) {
             Ok(session) => return session,
             Err(e) => {
                 tracing::error!(
-                    "serial connect failed: {e:#}; retry in {}s",
+                    "device connect failed: {e:#}; retry in {}s",
                     REOPEN_BACKOFF.as_secs()
                 );
                 std::thread::sleep(REOPEN_BACKOFF);
@@ -95,15 +120,31 @@ fn connect_blocking(config: &Config) -> SerialSession {
     }
 }
 
-fn try_connect(config: &Config) -> Result<SerialSession> {
-    let mut session = SerialSession::open(&config.serial_port)?;
-    match session.firmware_info() {
-        Ok(info) => tracing::info!("device firmware: {info}"),
-        Err(e) => tracing::debug!("firmware-info unavailable: {e:#}"),
+fn try_connect(config: &Config) -> Result<Session> {
+    match config.transport {
+        Transport::Serial => {
+            let mut session = SerialSession::open(&config.serial_port)?;
+            match session.firmware_info() {
+                Ok(info) => tracing::info!("device firmware: {info}"),
+                Err(e) => tracing::debug!("firmware-info unavailable: {e:#}"),
+            }
+            let secret =
+                config.bridge_secret.as_ref().expect("serial transport always has a secret");
+            session.authenticate(secret)?;
+            tracing::info!("bridge session authenticated");
+            Ok(Session::Serial(session))
+        }
+        Transport::LedgerTcp => {
+            // No session secret: the Ledger authenticates its user (PIN) and
+            // gates signing on-device (TOFU approval in the app).
+            let mut session = LedgerSession::open_tcp(&config.serial_port)?;
+            match session.firmware_info() {
+                Ok(info) => tracing::info!("device firmware: {info}"),
+                Err(e) => tracing::debug!("firmware-info unavailable: {e:#}"),
+            }
+            Ok(Session::Ledger(session))
+        }
     }
-    session.authenticate(&config.bridge_secret)?;
-    tracing::info!("bridge session authenticated");
-    Ok(session)
 }
 
 fn short(hex: &str) -> &str {
