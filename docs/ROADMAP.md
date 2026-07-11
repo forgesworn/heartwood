@@ -4,7 +4,7 @@ One roadmap for the three repos: **heartwood** (bridge daemon + Pi appliance),
 **heartwood-esp32** (device firmware, five boards), **sapwood** (web flasher +
 admin console). Update this file as work lands; keep the session log brief.
 
-Last updated: 2026-07-11.
+Last updated: 2026-07-12.
 
 ## Where we are
 
@@ -143,17 +143,25 @@ towards something you could carry.
 - [ ] heartwood #6 (typed NIP-46 params), #2 (`heartwood_switch` scope),
       #3 (`heartwood_capabilities`), #1 (connect/ping methods).
 
-## Exploration track — Ledger port (PoC proven, unprioritised)
+## Exploration track — Ledger port (working prototype, bench-gated)
 
 `heartwood-ledger` (local repo, not yet on GitHub): the signer as a Ledger
-embedded app, proven end-to-end in Speculos on 2026-07-11. Same seed phrase →
-same npub + personas (frozen all-zero vector passes); `heartwood-common`
-compiles for the Ledger target unmodified; chunked APDUs carry the exact
-0x10 frame body, so the bridge only needs an APDU/HID transport. Before this
-goes near real keys or review: NBGL sign confirmation + policy-engine port,
-cx-syscall curve backend (k256 currently runs in app RAM), real icon, and a
-decision on distribution (sideload Nano S/S+ now; Ledger Live needs a paid
-third-party audit — Tezos baking app is the unattended-signing precedent).
+embedded app, proven end-to-end in Speculos. Same seed phrase → same npub +
+personas (frozen all-zero vector passes); `heartwood-common` compiles for the
+Ledger target unmodified; chunked APDUs carry the exact 0x10 frame body.
+Landed 2026-07-12: **TOFU signing approval** (first `sign_event` per client
+blocks on an NBGL Approve/Reject; approved clients persist in app NVM and
+sign unattended — e2e walks the buttons both ways), **cx-syscall signing**
+(`cx_ecschnorr` BIP-0340, key zeroised after use), own icon, and the bridge's
+**`ledger-tcp` transport** (this branch: `HEARTWOOD_TRANSPORT=ledger-tcp`,
+no `bridge.secret`; live-smoked against Speculos with the real binary).
+
+Remaining, in order: bench test on a physical Nano S+ (sideload; needs the
+device), USB HID bridge transport (bench-gated, `hidapi` in release images),
+`ledger-backend` feature in `heartwood-common` (derivation + NIP-44 ECDH
+still run k256 in app RAM; signing does not), and the distribution decision
+(sideload Nano S/S+ now; Ledger Live needs a paid third-party audit — the
+Tezos baking app is the unattended-signing precedent).
 
 ## Non-goals / locked decisions
 
@@ -168,6 +176,13 @@ third-party audit — Tezos baking app is the unattended-signing precedent).
 
 ## Session log
 
+- **2026-07-12** — Ledger port finished to emulator-proven: TOFU approval on
+  Ledger buttons (NVM-persisted, e2e-driven via Speculos's REST API, approve
+  AND reject paths), signing moved onto the `cx_ecschnorr` syscall, own icon,
+  and `heartwood-bridge` gained a `ledger-tcp` transport (branch
+  `ledger-transport`, zero new deps, 49 tests green, live-smoked against
+  Speculos). Left: physical Nano S+ bench, HID transport, common's
+  `ledger-backend`.
 - **2026-07-11** — Ledger port researched, built and proven in one session.
   Feasibility verified (BOLOS has BIP-340/ECDH/ChaCha20; derivation path is
   plain BIP-32 so identities interoperate), then `heartwood-ledger` PoC built:
