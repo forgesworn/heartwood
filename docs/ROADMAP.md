@@ -4,7 +4,7 @@ One roadmap for the three repos: **heartwood** (bridge daemon + Pi appliance),
 **heartwood-esp32** (device firmware, five boards), **sapwood** (web flasher +
 admin console). Update this file as work lands; keep the session log brief.
 
-Last updated: 2026-07-02.
+Last updated: 2026-07-11.
 
 ## Where we are
 
@@ -143,6 +143,18 @@ towards something you could carry.
 - [ ] heartwood #6 (typed NIP-46 params), #2 (`heartwood_switch` scope),
       #3 (`heartwood_capabilities`), #1 (connect/ping methods).
 
+## Exploration track — Ledger port (PoC proven, unprioritised)
+
+`heartwood-ledger` (local repo, not yet on GitHub): the signer as a Ledger
+embedded app, proven end-to-end in Speculos on 2026-07-11. Same seed phrase →
+same npub + personas (frozen all-zero vector passes); `heartwood-common`
+compiles for the Ledger target unmodified; chunked APDUs carry the exact
+0x10 frame body, so the bridge only needs an APDU/HID transport. Before this
+goes near real keys or review: NBGL sign confirmation + policy-engine port,
+cx-syscall curve backend (k256 currently runs in app RAM), real icon, and a
+decision on distribution (sideload Nano S/S+ now; Ledger Live needs a paid
+third-party audit — Tezos baking app is the unattended-signing precedent).
+
 ## Non-goals / locked decisions
 
 - **No eFuses, ever** — no secure boot, flash encryption, or NVS encryption.
@@ -156,6 +168,12 @@ towards something you could carry.
 
 ## Session log
 
+- **2026-07-11** — Ledger port researched, built and proven in one session.
+  Feasibility verified (BOLOS has BIP-340/ECDH/ChaCha20; derivation path is
+  plain BIP-32 so identities interoperate), then `heartwood-ledger` PoC built:
+  Nano S+ app reusing `heartwood-common`, `scripts/e2e.sh` green — frozen
+  vector npub match, NIP-46/NIP-44 round trips, persona derive/switch/sign
+  all verified in Speculos. See the exploration track above for what remains.
 - **2026-07-02 (later)** — Signed OTA implemented AND shipped as firmware
   v0.10.0 (see the P1 tick above for the pieces). Devices running 0.10.0+
   refuse firmware that isn't signed by the release key; a compromised
