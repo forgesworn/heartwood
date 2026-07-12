@@ -156,12 +156,21 @@ sign unattended — e2e walks the buttons both ways), **cx-syscall signing**
 **`ledger-tcp` transport** (this branch: `HEARTWOOD_TRANSPORT=ledger-tcp`,
 no `bridge.secret`; live-smoked against Speculos with the real binary).
 
-Remaining, in order: bench test on a physical Nano S+ (sideload; needs the
-device), USB HID bridge transport (bench-gated, `hidapi` in release images),
-`ledger-backend` feature in `heartwood-common` (derivation + NIP-44 ECDH
-still run k256 in app RAM; signing does not), and the distribution decision
+Also landed 2026-07-12 (later): **`ledger-hid` transport** (Ledger's 64-byte
+report framing hand-rolled over Linux hidraw, zero new deps, framing
+mock-tested; hardware end bench-gated), **`--bunker-uri`** (prints the
+NIP-46 connection string per master, also logged at startup — the thing an
+operator hands their Nostr client), and **`ledger-backend` in
+heartwood-common** (heartwood-esp32 branch `ledger-backend`: pubkey, ECDH
+with even-y lift via OS modular maths, and signing all on cx syscalls;
+k256 fully out of the app; 163 host tests + cargo-deny green).
+
+Remaining: bench test on a physical Nano S+ — sideload the app, rerun the
+host driver over `ledger-hid` (needs the ~£70 device; the one place to
+expect surprises is stack headroom), then the distribution decision
 (sideload Nano S/S+ now; Ledger Live needs a paid third-party audit — the
-Tezos baking app is the unattended-signing precedent).
+Tezos baking app is the unattended-signing precedent). Also pending: a
+GitHub home for `heartwood-ledger`, and merging the two feature branches.
 
 ## Non-goals / locked decisions
 
