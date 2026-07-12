@@ -104,6 +104,12 @@ pub fn spawn_serial_worker(
         .expect("spawn serial worker thread")
 }
 
+/// Connect once and return the device's master pubkeys (`--bunker-uri`).
+pub fn query_masters(config: &Config) -> Result<Vec<String>> {
+    let mut session = try_connect(config)?;
+    session.list_master_pubkeys()
+}
+
 /// Open + authenticate, retrying forever with backoff.
 fn connect_blocking(config: &Config) -> Session {
     loop {
@@ -134,10 +140,13 @@ fn try_connect(config: &Config) -> Result<Session> {
             tracing::info!("bridge session authenticated");
             Ok(Session::Serial(session))
         }
-        Transport::LedgerTcp => {
+        Transport::LedgerTcp | Transport::LedgerHid => {
             // No session secret: the Ledger authenticates its user (PIN) and
             // gates signing on-device (TOFU approval in the app).
-            let mut session = LedgerSession::open_tcp(&config.serial_port)?;
+            let mut session = match config.transport {
+                Transport::LedgerTcp => LedgerSession::open_tcp(&config.serial_port)?,
+                _ => LedgerSession::open_hid(&config.serial_port)?,
+            };
             match session.firmware_info() {
                 Ok(info) => tracing::info!("device firmware: {info}"),
                 Err(e) => tracing::debug!("firmware-info unavailable: {e:#}"),

@@ -53,15 +53,31 @@ async fn main() -> Result<()> {
                 println!("heartwood-bridge {}", env!("CARGO_PKG_VERSION"));
                 return Ok(());
             }
+            "--bunker-uri" => {
+                // Print the client connection string(s) and exit: connect to
+                // the device once, read its masters, pair with the configured
+                // relays. No relay connections are made.
+                let config = config::Config::load()?;
+                let masters = bridge::query_masters(&config)
+                    .context("querying the device for its master pubkeys")?;
+                for master in masters {
+                    println!("{}", npub::bunker_uri(&master, &config.relays));
+                }
+                return Ok(());
+            }
             "--help" | "-h" => {
                 println!(
                     "heartwood-bridge {}\n\n\
                      Headless relay-to-USB signing bridge. Holds no keys.\n\n\
-                     Configuration (no flags):\n  \
+                     Flags:\n  \
+                     --bunker-uri            print the client connection string(s) and exit\n  \
+                     --version, --help\n\n\
+                     Configuration:\n  \
                      HEARTWOOD_DATA_DIR      data dir (default /var/lib/heartwood)\n  \
-                     HEARTWOOD_TRANSPORT     'serial' (default) or 'ledger-tcp'\n  \
+                     HEARTWOOD_TRANSPORT     'serial' (default), 'ledger-tcp' or 'ledger-hid'\n  \
                      HEARTWOOD_SERIAL_PORT   signer serial port (e.g. /dev/ttyUSB0),\n                          \
-                     or host:port of a Ledger APDU endpoint\n  \
+                     host:port of a Ledger APDU endpoint, or a\n                          \
+                     /dev/hidrawN node ('auto' scans for a Ledger)\n  \
                      HEARTWOOD_RELAYS        comma-separated relay list (optional)\n\n\
                      The bridge secret is read from <data dir>/bridge.secret\n\
                      (provisioned over USB with the `provision` CLI; serial only —\n\
@@ -106,6 +122,12 @@ async fn main() -> Result<()> {
             return Ok(());
         }
     };
+
+    // The connection string a client needs — the one thing an operator must
+    // hand to their Nostr app. Also available offline via `--bunker-uri`.
+    for master in &masters {
+        tracing::info!("client connection string: {}", npub::bunker_uri(master, &relays));
+    }
 
     let seen = dedup::Seen::new(SEEN_CAPACITY);
     for url in relays {

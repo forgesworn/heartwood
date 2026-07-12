@@ -41,6 +41,8 @@ pub enum Transport {
     Serial,
     /// APDUs to a Ledger running the Heartwood app, over Ledger's TCP framing.
     LedgerTcp,
+    /// APDUs to a physical Ledger over Linux hidraw (USB HID).
+    LedgerHid,
 }
 
 pub struct Config {
@@ -66,7 +68,7 @@ impl Config {
         let relays = resolve_relays(&file);
         let bridge_secret = match transport {
             Transport::Serial => Some(read_bridge_secret(&data_dir)?),
-            Transport::LedgerTcp => None,
+            Transport::LedgerTcp | Transport::LedgerHid => None,
         };
         Ok(Self { data_dir, transport, serial_port, relays, bridge_secret })
     }
@@ -85,7 +87,10 @@ fn resolve_transport(file: &Option<Value>) -> Result<Transport> {
     match raw.as_deref().map(str::trim) {
         None | Some("serial") => Ok(Transport::Serial),
         Some("ledger-tcp") => Ok(Transport::LedgerTcp),
-        Some(other) => bail!("unknown transport '{other}' (expected 'serial' or 'ledger-tcp')"),
+        Some("ledger-hid") => Ok(Transport::LedgerHid),
+        Some(other) => {
+            bail!("unknown transport '{other}' (expected 'serial', 'ledger-tcp' or 'ledger-hid')")
+        }
     }
 }
 

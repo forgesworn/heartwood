@@ -32,6 +32,19 @@ pub fn hex_encode(bytes: &[u8]) -> String {
     s
 }
 
+/// The NIP-46 connection string a client pastes to reach this signer:
+/// `bunker://<master-pubkey-hex>?relay=<url>&relay=<url>`. Relay URLs are
+/// percent-encoded (`:` and `/`) the way clients emit their own bunker URIs.
+pub fn bunker_uri(master_hex: &str, relays: &[String]) -> String {
+    let mut uri = format!("bunker://{master_hex}");
+    for (i, relay) in relays.iter().enumerate() {
+        uri.push(if i == 0 { '?' } else { '&' });
+        uri.push_str("relay=");
+        uri.push_str(&relay.replace(':', "%3A").replace('/', "%2F"));
+    }
+    uri
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -60,5 +73,19 @@ mod tests {
     #[test]
     fn hex_encode_is_lowercase_and_padded() {
         assert_eq!(hex_encode(&[0x00, 0x0f, 0xa0, 0xff]), "000fa0ff");
+    }
+
+    #[test]
+    fn bunker_uri_encodes_relays() {
+        let relays = vec!["wss://relay.damus.io".to_string(), "wss://nos.lol".to_string()];
+        assert_eq!(
+            bunker_uri(HEX, &relays),
+            format!("bunker://{HEX}?relay=wss%3A%2F%2Frelay.damus.io&relay=wss%3A%2F%2Fnos.lol")
+        );
+    }
+
+    #[test]
+    fn bunker_uri_without_relays_is_bare() {
+        assert_eq!(bunker_uri(HEX, &[]), format!("bunker://{HEX}"));
     }
 }
