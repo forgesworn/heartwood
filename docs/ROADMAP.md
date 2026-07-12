@@ -165,12 +165,16 @@ heartwood-common** (heartwood-esp32 branch `ledger-backend`: pubkey, ECDH
 with even-y lift via OS modular maths, and signing all on cx syscalls;
 k256 fully out of the app; 163 host tests + cargo-deny green).
 
+Shipped 2026-07-12 (later): app published at
+github.com/forgesworn/heartwood-ledger; the `ledger-transport` (bridge) and
+`ledger-backend` (common) branches merged to main, CI green in both repos
+including the multi-arch Docker image.
+
 Remaining: bench test on a physical Nano S+ — sideload the app, rerun the
 host driver over `ledger-hid` (needs the ~£70 device; the one place to
 expect surprises is stack headroom), then the distribution decision
 (sideload Nano S/S+ now; Ledger Live needs a paid third-party audit — the
-Tezos baking app is the unattended-signing precedent). Also pending: a
-GitHub home for `heartwood-ledger`, and merging the two feature branches.
+Tezos baking app is the unattended-signing precedent).
 
 ## Non-goals / locked decisions
 
