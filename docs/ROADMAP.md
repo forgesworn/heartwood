@@ -130,9 +130,10 @@ towards something you could carry.
       "keys stay on hardware". Deleted it, its web UI, and the bunker sidecar;
       `heartwood-bridge` (keyless relay↔USB daemon) is now the whole product,
       configured from env/config.json + the `provision` CLI. Software-signer
-      use case → lite.mysignet.app. Uncommitted; deployment pipeline
-      (Docker/release) repointed but needs a real build/deploy test; README +
-      architecture docs still need a positioning rewrite.
+      use case → lite.mysignet.app. Docs positioning rewrite COMPLETE
+      (README/ARCHITECTURE 2026-07-02; SECURITY/CONTRIBUTING 2026-07-12 —
+      they still described the Pi signer). Docker multi-arch image builds
+      green in CI; a real deploy test on the box remains.
 - [ ] Automate the sapwood firmware push to Hetzner: CI step fetching the
       firmware from the GitHub release by tag, replacing the manual rsync
       (the step that once served index.html as app.bin).
