@@ -2,7 +2,7 @@
 
 > **This component is part of the [ForgeSworn Identity Stack](docs/ECOSYSTEM.md).** See the ecosystem overview for how it connects to the other components.
 
-Heartwood is the relay-facing half of a hardware Nostr signer. The signing key lives only on a USB-tethered hardware device (an ESP32 or ESP8266 running the [`heartwood-esp32`](https://github.com/forgesworn/heartwood-esp32) firmware) — never on a general-purpose computer. This repo ships `heartwood-bridge`, a small headless Linux daemon that connects Nostr relays to that device over serial, plus the crates it is built from. There is no web UI, no PIN-protected key on disk, and no Tor hidden service: the bridge holds no key material and makes outbound relay connections only.
+Heartwood is the relay-facing half of a hardware Nostr signer. The signing key lives only on a USB-tethered hardware device — an ESP32 or ESP8266 running the [`heartwood-esp32`](https://github.com/forgesworn/heartwood-esp32) firmware, or a Ledger running the [`heartwood-ledger`](https://github.com/forgesworn/heartwood-ledger) app — never on a general-purpose computer. This repo ships `heartwood-bridge`, a small headless Linux daemon that connects Nostr relays to that device over serial, plus the crates it is built from. There is no web UI, no PIN-protected key on disk, and no Tor hidden service: the bridge holds no key material and makes outbound relay connections only.
 
 ## Architecture overview
 

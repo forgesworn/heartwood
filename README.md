@@ -5,7 +5,7 @@
 
 Open-source Nostr signing built on [nsec-tree](https://github.com/forgesworn/nsec-tree). **`heartwood-bridge` is a headless, keyless daemon**: it connects Nostr relays to a USB-tethered hardware signer, so your private keys live on dedicated hardware and never touch a networked computer. The bridge holds no key material and never sees plaintext — every operation (NIP-44 decryption, request handling, signing) happens *on the device*, inline over USB. The bridge is just the device's relay connection, and nothing more.
 
-The hardware signer is an ESP32 running the [heartwood-esp32](https://github.com/forgesworn/heartwood-esp32) firmware. Most people configure it over USB with [Sapwood](https://sapwood.forgesworn.dev); the air-gapped, no-browser path uses the `provision` CLI. The software-only signer (keys in a browser) lives at [lite.mysignet.app](https://lite.mysignet.app), not here.
+The hardware signer is an ESP32 running the [heartwood-esp32](https://github.com/forgesworn/heartwood-esp32) firmware, or a Ledger running the [heartwood-ledger](https://github.com/forgesworn/heartwood-ledger) app (emulator-proven; select with `HEARTWOOD_TRANSPORT=ledger-tcp|ledger-hid` — same identity, same seed phrase, keys in a secure element). Most people configure the ESP over USB with [Sapwood](https://sapwood.forgesworn.dev); the air-gapped, no-browser path uses the `provision` CLI. The software-only signer (keys in a browser) lives at [lite.mysignet.app](https://lite.mysignet.app), not here.
 
 ## What it does
 
