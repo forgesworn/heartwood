@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+- `heartwood-bridge` now detects and recovers a half-open relay socket: it sends a WebSocket keepalive ping every 30s, declares the connection dead after 90s without any inbound traffic, and bounds every outbound send at 10s — previously an idle flow silently evicted by a NAT or reverse proxy (commonly at the 3600s conntrack timeout, observed as the signer "going deaf after about an hour") left the bridge blocked on a read forever, with no reconnect and no re-REQ
+- `heartwood-bridge` treats a relay `CLOSED` for its own subscription as fatal to the session, forcing a reconnect and fresh REQ — previously it was only logged, leaving the bridge connected but subscribed to nothing
+
 ## [0.7.0] - 2026-07-02
 
 ### Added

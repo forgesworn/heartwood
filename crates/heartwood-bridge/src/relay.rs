@@ -28,6 +28,29 @@ pub struct RequestJob {
 const SUBSCRIPTION_ID: &str = "heartwood-bridge";
 const MIN_BACKOFF: Duration = Duration::from_secs(1);
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
+/// Client-originated WebSocket ping cadence. NIP-46 traffic is bursty; an
+/// idle flow gets silently evicted by stateful NATs and reverse proxies
+/// (consumer conntrack commonly times out established TCP at 3600s — field
+/// signature: the bridge goes deaf after "about an hour"). Pings keep the
+/// flow warm and give the idle detector traffic to observe.
+const PING_INTERVAL: Duration = Duration::from_secs(30);
+/// No inbound traffic (pong, EVENT, anything) for this long means the socket
+/// is half-open: packets are being black-holed and `read.next()` would wait
+/// forever. Bail so the reconnect loop re-dials and re-subscribes. Three
+/// missed pings — generous against a slow relay, decisive against a dead one.
+const IDLE_LIMIT: Duration = Duration::from_secs(90);
+/// Bound on any outbound send. A half-open socket can also park a write once
+/// the kernel buffer fills; never let that disable the idle detector.
+const SEND_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// What the caller must do after a handled relay message.
+#[derive(Debug, PartialEq, Eq)]
+enum Flow {
+    Continue,
+    /// The relay closed our subscription — only a fresh REQ (via reconnect)
+    /// restores request delivery, so the session must be recycled.
+    Resubscribe,
+}
 
 /// Run one relay connection forever, reconnecting with capped backoff.
 pub async fn run_relay(
@@ -77,6 +100,13 @@ async fn connect_and_serve(
 
     let mut resp_rx = resp_tx.subscribe();
 
+    let mut ping = tokio::time::interval_at(
+        tokio::time::Instant::now() + PING_INTERVAL,
+        PING_INTERVAL,
+    );
+    ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut last_inbound = tokio::time::Instant::now();
+
     loop {
         tokio::select! {
             // Inbound from the relay.
@@ -85,19 +115,39 @@ async fn connect_and_serve(
                     Some(m) => m.context("relay read failed")?,
                     None => return Ok(()), // stream ended
                 };
+                last_inbound = tokio::time::Instant::now();
                 match msg {
-                    Message::Text(text) => handle_relay_message(&text, url, masters, seen, job_tx).await,
+                    Message::Text(text) => {
+                        if handle_relay_message(&text, url, masters, seen, job_tx).await == Flow::Resubscribe {
+                            anyhow::bail!("subscription closed by relay");
+                        }
+                    }
                     Message::Ping(payload) => { let _ = write.send(Message::Pong(payload)).await; }
                     Message::Close(_) => return Ok(()),
-                    _ => {}
+                    _ => {} // Pong and binary: traffic is all we needed to see
                 }
+            }
+            // Keepalive + half-open detection. The check runs before the
+            // send, so a black-holed flow is declared dead by silence alone.
+            _ = ping.tick() => {
+                let idle = last_inbound.elapsed();
+                if idle >= IDLE_LIMIT {
+                    anyhow::bail!("no relay traffic for {}s; connection presumed dead", idle.as_secs());
+                }
+                tokio::time::timeout(SEND_TIMEOUT, write.send(Message::Ping(Vec::new())))
+                    .await
+                    .context("keepalive ping send timed out")?
+                    .context("sending keepalive ping")?;
             }
             // Outbound: a freshly-signed response to publish everywhere.
             broadcasted = resp_rx.recv() => {
                 match broadcasted {
                     Ok(event_json) => {
                         let publish = format!("[\"EVENT\",{event_json}]");
-                        write.send(Message::Text(publish)).await.context("publishing event")?;
+                        tokio::time::timeout(SEND_TIMEOUT, write.send(Message::Text(publish)))
+                            .await
+                            .context("publish send timed out")?
+                            .context("publishing event")?;
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         tracing::warn!(relay = %url, "publish lagged; dropped {n} response(s)");
@@ -115,20 +165,20 @@ async fn handle_relay_message(
     masters: &[String],
     seen: &Seen,
     job_tx: &mpsc::Sender<RequestJob>,
-) {
+) -> Flow {
     let parsed: Value = match serde_json::from_str(text) {
         Ok(v) => v,
-        Err(_) => return,
+        Err(_) => return Flow::Continue,
     };
     let arr = match parsed.as_array() {
         Some(a) if !a.is_empty() => a,
-        _ => return,
+        _ => return Flow::Continue,
     };
 
     match arr[0].as_str() {
         // ["EVENT", sub_id, event]
         Some("EVENT") => {
-            let Some(event) = arr.get(2) else { return };
+            let Some(event) = arr.get(2) else { return Flow::Continue };
             match Nip46Request::from_event(event, masters) {
                 Ok(Some(request)) => {
                     if seen.insert(&request.id) {
@@ -156,8 +206,14 @@ async fn handle_relay_message(
         }
         // ["CLOSED", sub_id, message]
         Some("CLOSED") => {
+            let sub = arr.get(1).and_then(Value::as_str).unwrap_or("");
             let msg = arr.get(2).and_then(Value::as_str).unwrap_or("");
             tracing::warn!(relay = %url, "subscription closed by relay: {msg}");
+            if sub == SUBSCRIPTION_ID {
+                // Without the REQ no request ever reaches the device again;
+                // logging alone left the bridge connected but deaf.
+                return Flow::Resubscribe;
+            }
         }
         // ["NOTICE", message]
         Some("NOTICE") => {
@@ -166,6 +222,7 @@ async fn handle_relay_message(
         }
         _ => {} // EOSE and anything else: ignore
     }
+    Flow::Continue
 }
 
 /// First 12 hex chars, for compact logging.
@@ -261,6 +318,24 @@ mod tests {
         .to_string();
         handle_relay_message(&msg, "ws://t", &masters, &seen, &tx).await;
         assert!(rx.try_recv().is_ok(), "an id-less request is still dispatched");
+    }
+
+    #[tokio::test]
+    async fn closed_for_our_subscription_forces_a_resubscribe() {
+        let (masters, seen, tx, mut rx) = harness();
+        let msg = format!(r#"["CLOSED","{SUBSCRIPTION_ID}","rate-limited"]"#);
+        let flow = handle_relay_message(&msg, "ws://t", &masters, &seen, &tx).await;
+        assert_eq!(flow, Flow::Resubscribe);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn closed_for_a_foreign_subscription_changes_nothing() {
+        let (masters, seen, tx, mut rx) = harness();
+        let msg = r#"["CLOSED","someone-else","bye"]"#;
+        let flow = handle_relay_message(msg, "ws://t", &masters, &seen, &tx).await;
+        assert_eq!(flow, Flow::Continue);
+        assert!(rx.try_recv().is_err());
     }
 
     #[tokio::test]
