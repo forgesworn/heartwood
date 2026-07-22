@@ -100,10 +100,8 @@ async fn connect_and_serve(
 
     let mut resp_rx = resp_tx.subscribe();
 
-    let mut ping = tokio::time::interval_at(
-        tokio::time::Instant::now() + PING_INTERVAL,
-        PING_INTERVAL,
-    );
+    let mut ping =
+        tokio::time::interval_at(tokio::time::Instant::now() + PING_INTERVAL, PING_INTERVAL);
     ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut last_inbound = tokio::time::Instant::now();
 
