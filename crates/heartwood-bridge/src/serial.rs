@@ -108,8 +108,11 @@ impl SerialSession {
         }
     }
 
-    /// `PROVISION_LIST` (0x05 → 0x07): discover provisioned masters. Returns
-    /// their x-only public keys as hex (decoded from the reported npubs).
+    /// `PROVISION_LIST` (0x05 → 0x07): discover every identity the device
+    /// serves — masters AND derived personas (the firmware lists both, and a
+    /// persona is addressable by its own bunker URI). Returns their x-only
+    /// public keys as hex (decoded from the reported npubs); the relay
+    /// subscription filters are built from exactly this list.
     pub fn list_master_pubkeys(&mut self) -> Result<Vec<String>> {
         let (ty, payload) = self.transact(FRAME_TYPE_PROVISION_LIST, &[], CONTROL_TIMEOUT)?;
         if ty != FRAME_TYPE_PROVISION_LIST_RESPONSE {
