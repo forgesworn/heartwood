@@ -4,7 +4,7 @@ One roadmap for the three repos: **heartwood** (bridge daemon + Pi appliance),
 **heartwood-esp32** (device firmware, five boards), **sapwood** (web flasher +
 admin console). Update this file as work lands; keep the session log brief.
 
-Last updated: 2026-07-12.
+Last updated: 2026-09-26.
 
 ## Where we are
 
@@ -177,6 +177,28 @@ expect surprises is stack headroom), then the distribution decision
 (sideload Nano S/S+ now; Ledger Live needs a paid third-party audit — the
 Tezos baking app is the unattended-signing precedent).
 
+## Phone unlock follow-ups (parked 2026-09-26)
+
+Enrolment over the relay and the reversed invite flow shipped and passed the
+bench on 2026-09-26 (Sapwood Device tab redesign, Cambium 0.7.1). Left over,
+none started:
+
+- [ ] Check the redesigned Sapwood Device tab on the live site with a V4:
+      the words stay up through ADD PHONE, and the "codes don't match:
+      revoke" path. Still unverified: real iOS Safari, Android Chrome and
+      Firefox, a screen reader, and a keyboard-only walk.
+- [ ] Confirm F-Droid lists Cambium 0.7.1 (GitHub and Zapstore already do).
+- [ ] App-wide 44px tap targets in Sapwood. The Device tab is done; the
+      header link, password eye, relay suggestion chips and some inputs are
+      still small.
+- [ ] Cambium: accept the invite as a link or pasted text, not only a QR
+      scan (open question 2 in the design spec; no issue filed yet).
+- [ ] heartwood-esp32 #205: hold feedback on the ADD PHONE card (firmware,
+      needs a bench session).
+- [ ] heartwood-esp32 #194: held for the next beta.
+- Parked: heartwood-esp32 #197 and #198; sapwood #143 (draft: storage and
+  revocation outcomes from the board).
+
 ## Non-goals / locked decisions
 
 - **No eFuses, ever** — no secure boot, flash encryption, or NVS encryption.
@@ -189,6 +211,10 @@ Tezos baking app is the unattended-signing precedent).
   usable by an impatient kid and a non-technical adult, verified at 390px.
 
 ## Session log
+
+- **2026-09-26** — Phone enrolment finished: reversed invite QR and the
+  redesigned Sapwood Device tab shipped and bench-passed on a V4; Cambium
+  0.7.1 released. Follow-ups parked in the section above.
 
 - **2026-07-12** — Ledger port finished to emulator-proven: TOFU approval on
   Ledger buttons (NVM-persisted, e2e-driven via Speculos's REST API, approve
