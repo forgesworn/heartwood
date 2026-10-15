@@ -9,7 +9,7 @@ Heartwood is `heartwood-bridge`, a headless Rust daemon that connects Nostr rela
 | `cargo build` | Build the workspace |
 | `cargo build --release -p heartwood-bridge` | Build the bridge binary |
 | `cargo test --workspace` | Run all tests |
-| `cargo test -p heartwood-core` | Reference derivation tests only |
+| `cargo test -p nsec-tree-rs` | Reference derivation tests only (the package in `crates/heartwood-core`) |
 | `cargo test -p heartwood-bridge` | Bridge tests (mock device + relay e2e) |
 | `cargo clippy --workspace --all-targets -- -D warnings` | Lint |
 | `cargo fmt --all` | Format source files |
@@ -20,7 +20,8 @@ Heartwood is `heartwood-bridge`, a headless Rust daemon that connects Nostr rela
 ```
 crates/heartwood-bridge/   The product: relay tasks, de-dup, serial + Ledger transports
 crates/heartwood-frame/    Serial frame codec, mirrors the firmware's no_std codec
-crates/heartwood-core/     Reference nsec-tree derivation library; not used by any
+crates/heartwood-core/     Reference nsec-tree derivation library (Cargo package
+                            `nsec-tree-rs`); not used by any
                             binary here, kept for its frozen cross-implementation
                             test vectors
 docs/                       QUICKSTART.md, ECOSYSTEM.md, ROADMAP.md, dated notes
@@ -41,7 +42,7 @@ docs/                       QUICKSTART.md, ECOSYSTEM.md, ROADMAP.md, dated notes
 
 | File | Purpose |
 |------|---------|
-| `crates/heartwood-bridge/src/config.rs` | Bridge configuration: transport, device address, relays, `bridge.secret` |
+| `crates/heartwood-bridge/src/config.rs` | Bridge configuration: transport, device address, relays, `bridge.secret`. Environment: `HEARTWOOD_DATA_DIR`, `HEARTWOOD_TRANSPORT` (`serial`, `ledger-tcp`, `ledger-hid`), `HEARTWOOD_SERIAL_PORT`, `HEARTWOOD_RELAYS`; the README Configuration table has defaults |
 | `ARCHITECTURE.md` | Full internal architecture with diagrams |
 | `docs/QUICKSTART.md` | Install and run walkthrough, including Docker |
 | `docs/ECOSYSTEM.md` | Cross-repo ecosystem overview |

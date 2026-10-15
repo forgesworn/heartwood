@@ -2,7 +2,7 @@
 
 > Nostr private keys are pasted into web apps, stored in browser extensions, and copied to the clipboard. Heartwood keeps them on dedicated hardware instead.
 
-Heartwood is open-source Nostr signing built on nsec-tree. `heartwood-bridge` is a headless, keyless daemon that connects Nostr relays to a USB-tethered hardware signer -- an ESP32 running the [heartwood-esp32](https://github.com/forgesworn/heartwood-esp32) firmware. The bridge holds no key material and never sees plaintext: NIP-44 decryption, NIP-46 request dispatch, per-client permissions, session/replay protection, and signing all happen on the device itself, inline over USB. The bridge is only the device's relay connection, and nothing more.
+Heartwood is open-source Nostr signing built on nsec-tree. `heartwood-bridge` is a headless, keyless daemon that connects Nostr relays to a USB-tethered hardware signer -- an ESP32 running the [heartwood-esp32](https://github.com/forgesworn/heartwood-esp32) firmware, or a Ledger running the [heartwood-ledger](https://github.com/forgesworn/heartwood-ledger) app (`HEARTWOOD_TRANSPORT=ledger-tcp|ledger-hid`; `ledger-tcp` is proven against the Speculos emulator only, and `ledger-hid` has not yet been verified on a physical Ledger). The bridge holds no key material and never sees plaintext: NIP-44 decryption, NIP-46 request dispatch, per-client permissions, session/replay protection, and signing all happen on the device itself, inline over USB. The bridge is only the device's relay connection, and nothing more.
 
 Repository: https://github.com/forgesworn/heartwood
 Licence: MIT
@@ -27,9 +27,10 @@ Heartwood is a Rust workspace with three crates and one runtime binary, `heartwo
 
 ```
 heartwood-bridge      The product -- headless, keyless relay-to-USB signing daemon
-  ├── main.rs         Entry point: --version/--help, config load, task wiring
+  ├── main.rs         Entry point: --version/--help/--bunker-uri, config load, task wiring
   ├── config.rs       Env / config.json / bridge.secret resolution (HEARTWOOD_DATA_DIR)
   ├── serial.rs       Blocking serial session: auth, master discovery, 0x10 -> 0x35 request/response
+  ├── ledger.rs       Blocking APDU session to a Ledger (TCP framing or Linux hidraw), same 0x10 body
   ├── bridge.rs       Serial worker thread: sequential job processing, response broadcast
   ├── relay.rs        Per-relay websocket task: subscribe, de-dup, forward, publish, reconnect
   ├── dedup.rs        Bounded de-duplication set for cross-relay request ids
@@ -58,7 +59,16 @@ Data flow: NIP-46 clients → Nostr relays → `heartwood-bridge` (subscribes, d
 
 ## heartwood-core API
 
-The crate's package name is `nsec-tree-rs` (imported as `nsec_tree_rs`); the workspace directory is still `crates/heartwood-core`.
+The crate's package name is `nsec-tree-rs` (imported as `nsec_tree_rs`); the workspace directory is still `crates/heartwood-core`, so use `cargo test -p nsec-tree-rs`, not `-p heartwood-core`. It is published on crates.io (the release workflow runs `cargo publish -p nsec-tree-rs` on version tags; current version 0.1.0). Add it to `Cargo.toml`:
+
+```toml
+[dependencies]
+nsec-tree-rs = "0.1"
+# or, to track this repository instead:
+# nsec-tree-rs = { git = "https://github.com/forgesworn/heartwood" }
+```
+
+See [llms.txt](./llms.txt) for the argument-by-argument notes (what each `None` means) and a worked example including `create_full_proof`.
 
 ### Types
 
@@ -285,7 +295,9 @@ nostrconnect://{signer-pubkey}?relay=wss://{relay}&secret={secret}&perms={kinds}
 - Client approval, per-client kind restrictions, and rate limiting
 - Session handling and replay protection
 
-There is no Tor hidden service and no web UI serving a pairing QR code. Pairing -- generating the `bunker://` connection string, approving new clients, and setting per-client permissions -- is configured on the device itself, normally via [Sapwood](https://sapwood.forgesworn.dev) (Web Serial/USB), or offline with the `provision` CLI. See [`heartwood-esp32`](https://github.com/forgesworn/heartwood-esp32) for the firmware-side protocol implementation.
+There is no Tor hidden service and no web UI serving a pairing QR code. Approving new clients and setting per-client permissions are configured on the device itself, normally via [Sapwood](https://sapwood.forgesworn.dev) (Web Serial/USB), or offline with the `provision` CLI.
+
+The connection string the bridge hands out has the form `bunker://<master-pubkey-hex>?relay=<url>&relay=<url>` (relay URLs percent-encoded, no `secret` parameter), one per master identity the device reports. Get it from Sapwood, from the bridge's startup log (`client connection string: ...`), or from `heartwood-bridge --bunker-uri`, which connects to the signer once, prints the string(s) and exits without connecting to any relay. It reads the same configuration as the service, so run it with the same `HEARTWOOD_*` values. See [`heartwood-esp32`](https://github.com/forgesworn/heartwood-esp32) for the firmware-side protocol implementation.
 
 NIP-42 AUTH is unsupported: the bridge holds no key, so it cannot sign an auth challenge. Relays that require AUTH for kind:24133 requests are out of scope.
 
@@ -341,10 +353,15 @@ cargo install cross
 cross build --release --target aarch64-unknown-linux-gnu -p heartwood-bridge
 ```
 
-Docker (multi-arch: aarch64/armv7/amd64):
+Docker (multi-arch: aarch64/armv7/amd64; `<version>` is a release version without the leading `v`, or `main`):
 
 ```bash
-docker pull ghcr.io/forgesworn/heartwood:<version>
+docker run -d --name heartwood-bridge --restart unless-stopped \
+  --device /dev/ttyUSB0 \
+  -e HEARTWOOD_SERIAL_PORT=/dev/ttyUSB0 \
+  -e HEARTWOOD_RELAYS=wss://relay.damus.io,wss://nos.lol \
+  -v /var/lib/heartwood:/var/lib/heartwood \
+  ghcr.io/forgesworn/heartwood:<version>
 ```
 
 ### Provisioning
@@ -354,25 +371,34 @@ The hardware signer's keys, and the `bridge.secret` the bridge needs to authenti
 - **[Sapwood](https://sapwood.forgesworn.dev)** (recommended) -- a browser-based (Web Serial/USB) provisioning wizard for most users.
 - **`provision` CLI** (in [`heartwood-esp32`](https://github.com/forgesworn/heartwood-esp32)) -- the offline, air-gapped alternative, for the highest-security no-browser tier.
 
-Either path writes the master identity into the signer's own storage and writes a `bridge.secret` file that must be copied into the bridge's data directory before first start.
+Either path writes the master identity into the signer's own storage and produces a `bridge.secret` file on the machine it runs on. For the `serial` transport the bridge will not start without `<HEARTWOOD_DATA_DIR>/bridge.secret` (64 hex characters, whitespace ignored, or exactly 32 raw bytes). If provisioning ran elsewhere, copy the file across with `0600` permissions, owned by the user that runs the bridge:
+
+```bash
+sudo install -m 0600 -o heartwood -g heartwood bridge.secret /var/lib/heartwood/bridge.secret
+# Docker: the image runs as uid 10001
+sudo install -m 0600 -o 10001 bridge.secret /var/lib/heartwood/bridge.secret
+```
+
+The `provision` CLI's own usage is documented in the `heartwood-esp32` repo. Ledger transports use no `bridge.secret`.
 
 ### Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|--------------|
 | `HEARTWOOD_DATA_DIR` | `/var/lib/heartwood` | Data directory: `config.json` and `bridge.secret` live here |
-| `HEARTWOOD_SERIAL_PORT` | (none) | Required -- serial device to talk to, e.g. `/dev/ttyUSB0`. Falls back to `config.json`'s `serial_port` field |
+| `HEARTWOOD_TRANSPORT` | `serial` | `serial` (ESP32 over USB), `ledger-tcp` or `ledger-hid` (Ledger). Falls back to `config.json`'s `transport` field. Any other value fails with `unknown transport` |
+| `HEARTWOOD_SERIAL_PORT` | (none) | Required -- the signer's address: a serial device path such as `/dev/ttyUSB0` for `serial`, `host:port` for `ledger-tcp`, `/dev/hidrawN` or `auto` for `ledger-hid`. Falls back to `config.json`'s `serial_port` field |
 | `HEARTWOOD_RELAYS` | built-in default list | Comma-separated relay URLs. Falls back to `config.json`'s `relays` array |
 | `RUST_LOG` | (none) | Tracing filter (e.g. `info`, `heartwood_bridge=debug`) |
 
-`config.json` (`{ "serial_port": "...", "relays": [...] }`) is a plain file written by whoever sets the box up -- there is no privileged process that owns it. The binary itself takes no flags beyond `--version`/`-V` and `--help`/`-h`.
+`config.json` (`{ "transport": "...", "serial_port": "...", "relays": [...] }`) is a plain file written by whoever sets the box up -- there is no privileged process that owns it. An environment variable wins over `config.json`, and a missing or malformed `config.json` is ignored. The binary itself takes no flags beyond `--version`/`-V`, `--help`/`-h` and `--bunker-uri`.
 
 ### Systemd
 
-Installed by the release install script as `heartwood-bridge.service`:
+Installed by the release install script as `heartwood-bridge.service` (enabled, not started). Re-running the script rewrites the unit file, so set `HEARTWOOD_SERIAL_PORT`, `HEARTWOOD_RELAYS` and the like in a drop-in (`sudo systemctl edit heartwood-bridge`, then add `[Service]` and `Environment=` lines) rather than editing the unit:
 
 ```bash
-sudo systemctl start heartwood-bridge
+sudo systemctl daemon-reload && sudo systemctl enable --now heartwood-bridge
 sudo systemctl status heartwood-bridge
 sudo journalctl -u heartwood-bridge -f
 ```
@@ -381,7 +407,7 @@ sudo journalctl -u heartwood-bridge -f
 
 | Path | Contents |
 |------|----------|
-| `/var/lib/heartwood/config.json` | Serial port and relay configuration |
+| `/var/lib/heartwood/config.json` | Transport, serial port and relay configuration |
 | `/var/lib/heartwood/bridge.secret` | USB session secret provisioned by Sapwood or the `provision` CLI (mode 0600) |
 
 There is no encrypted secret file, no bunker keypair, and no audit log on the bridge host -- the bridge holds nothing sensitive beyond `bridge.secret`, which authenticates the USB session rather than signing anything.
