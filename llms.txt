@@ -2,7 +2,7 @@
 
 > Nostr private keys are pasted into web apps, stored in browser extensions, and copied to the clipboard. Heartwood keeps them on dedicated hardware instead.
 
-Heartwood is open-source Nostr signing built on nsec-tree. `heartwood-bridge` is a headless, keyless daemon that connects Nostr relays to a USB-tethered hardware signer -- an ESP32 running the [heartwood-esp32](https://github.com/forgesworn/heartwood-esp32) firmware. The bridge holds no key material and never sees plaintext: NIP-44 decryption, NIP-46 request dispatch, per-client permissions, session/replay protection, and signing all happen on the device itself, inline over USB. The bridge is only the device's relay connection, and nothing more.
+Heartwood is open-source Nostr signing built on nsec-tree. `heartwood-bridge` is a headless, keyless daemon that connects Nostr relays to a USB-tethered hardware signer -- an ESP32 running the [heartwood-esp32](https://github.com/forgesworn/heartwood-esp32) firmware, or a Ledger running the [heartwood-ledger](https://github.com/forgesworn/heartwood-ledger) app. The bridge holds no key material and never sees plaintext: NIP-44 decryption, NIP-46 request dispatch, per-client permissions, session/replay protection, and signing all happen on the device itself, inline over USB. The bridge is only the device's relay connection, and nothing more.
 
 It is aimed at Nostr power users who want hardware-backed key security without renting a VPS, and at app developers building multi-identity Nostr clients that need a signing backend which works on iOS, Android, and web equally, since NIP-46 is relay-mediated.
 
@@ -10,7 +10,7 @@ Heartwood is a direct replacement for nsecBunker (no VPS required), an iOS-compa
 
 ## Getting Started
 
-Two pieces: a hardware signer (an ESP32 running `heartwood-esp32`, with keys provisioned over USB via [Sapwood](https://sapwood.forgesworn.dev) or the offline `provision` CLI) and a bridge host (any small Linux box with a USB port and a network connection -- a Raspberry Pi Zero 2 W or similar).
+Two pieces: a hardware signer and a bridge host (any small Linux box with a USB port and a network connection -- a Raspberry Pi Zero 2 W or similar). The signer is either an ESP32 running `heartwood-esp32` (default `serial` transport; keys provisioned over USB via [Sapwood](https://sapwood.forgesworn.dev) or the offline `provision` CLI) or a Ledger running `heartwood-ledger` (`HEARTWOOD_TRANSPORT=ledger-tcp` or `ledger-hid`; no `bridge.secret`). Real-device status for Ledger: `ledger-tcp` is proven end to end against the Speculos emulator only; `ledger-hid` (a physical Ledger over Linux hidraw) is implemented and its USB framing is unit-tested, but it has not been verified on physical hardware, so treat real Ledger devices as untested.
 
 Install the bridge:
 
@@ -18,17 +18,59 @@ Install the bridge:
 curl -sL https://github.com/forgesworn/heartwood/releases/latest/download/install.sh | sudo bash
 ```
 
-Point it at the signer's serial port and start it:
+The installer creates the `heartwood` user, `/var/lib/heartwood` and an enabled but not started `heartwood-bridge` unit, with `HEARTWOOD_SERIAL_PORT` pre-filled from the first `/dev/ttyUSB*` or `/dev/ttyACM*` it finds (else `/dev/ttyUSB0`). Re-running it rewrites the unit file, so put your settings in a drop-in:
 
 ```bash
-# /etc/systemd/system/heartwood-bridge.service
+sudo systemctl edit heartwood-bridge
+# add:
+#   [Service]
 #   Environment=HEARTWOOD_SERIAL_PORT=/dev/ttyUSB0
-sudo systemctl start heartwood-bridge
+#   Environment=HEARTWOOD_RELAYS=wss://relay.damus.io,wss://nos.lol
+sudo systemctl daemon-reload && sudo systemctl enable --now heartwood-bridge
 ```
 
-The `bridge.secret` file -- written onto the box over USB by Sapwood or the `provision` CLI -- must be present in `HEARTWOOD_DATA_DIR` (default `/var/lib/heartwood`) before the bridge will start. See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the full walkthrough, including Docker.
+Docker instead (multi-arch image; pass the device through and mount the data directory; `<version>` is a release version without the leading `v`, or `main`):
 
-Pair a Nostr client with the `bunker://` connection string shown in Sapwood. There is no web UI or QR code served by this repo; pairing and per-client permissions are configured on the device itself.
+```bash
+docker run -d --name heartwood-bridge --restart unless-stopped \
+  --device /dev/ttyUSB0 \
+  -e HEARTWOOD_SERIAL_PORT=/dev/ttyUSB0 \
+  -e HEARTWOOD_RELAYS=wss://relay.damus.io,wss://nos.lol \
+  -v /var/lib/heartwood:/var/lib/heartwood \
+  ghcr.io/forgesworn/heartwood:<version>
+```
+
+### Configuration
+
+Environment variables win over `config.json` (keys `transport`, `serial_port`, `relays`) in the data directory; a missing or malformed `config.json` is ignored. The binary takes no arguments apart from `--version`, `--help` and `--bunker-uri`.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `HEARTWOOD_SERIAL_PORT` | none (required) | Signer address: a serial device path (`/dev/ttyUSB0`) for `serial`, `host:port` for `ledger-tcp`, `/dev/hidrawN` or `auto` for `ledger-hid` |
+| `HEARTWOOD_TRANSPORT` | `serial` | `serial` (ESP32), `ledger-tcp` or `ledger-hid` (Ledger) |
+| `HEARTWOOD_DATA_DIR` | `/var/lib/heartwood` | Directory holding `config.json` and `bridge.secret` |
+| `HEARTWOOD_RELAYS` | built-in `DEFAULT_RELAYS` (see `crates/heartwood-bridge/src/config.rs`) | Comma-separated relay URLs |
+
+### Provisioning
+
+For the `serial` transport, `<HEARTWOOD_DATA_DIR>/bridge.secret` must exist before the bridge will start: 64 hex characters (whitespace ignored) or exactly 32 raw bytes, mode 0600, owned by the user that runs the bridge. Sapwood (browser) or the `provision` CLI (offline; lives in the [heartwood-esp32](https://github.com/forgesworn/heartwood-esp32) repo, not this one) produce it on the machine they run on. If that is not the bridge host, copy it across:
+
+```bash
+sudo install -m 0600 -o heartwood -g heartwood bridge.secret /var/lib/heartwood/bridge.secret
+# Docker: the image runs as uid 10001
+sudo install -m 0600 -o 10001 bridge.secret /var/lib/heartwood/bridge.secret
+```
+
+### Pair a client
+
+Pair a Nostr client with the `bunker://<master-pubkey-hex>?relay=<url>` connection string (relay URLs percent-encoded, no `secret` parameter). Get it from Sapwood, from the bridge's startup log (`sudo journalctl -u heartwood-bridge | grep 'client connection string'`), or, on the offline `provision` path, from `heartwood-bridge --bunker-uri`, which connects to the signer once, prints one string per master identity and exits without touching any relay. It reads the same configuration as the service, so give it the same `HEARTWOOD_*` values:
+
+```bash
+sudo -u heartwood env HEARTWOOD_SERIAL_PORT=/dev/ttyUSB0 \
+  HEARTWOOD_RELAYS=wss://relay.damus.io,wss://nos.lol heartwood-bridge --bunker-uri
+```
+
+There is no web UI or QR code served by this repo; client approval and per-client permissions are enforced on the device. See [docs/QUICKSTART.md](docs/QUICKSTART.md) for the full walkthrough.
 
 ## Key Concepts
 
@@ -42,38 +84,106 @@ Pair a Nostr client with the `bunker://` connection string shown in Sapwood. The
 
 ### heartwood-core (crate name `nsec-tree-rs`)
 
+The directory is `crates/heartwood-core`, but the Cargo package is `nsec-tree-rs` (imported as `nsec_tree_rs`), so use `cargo test -p nsec-tree-rs`, not `-p heartwood-core`. It is published on crates.io (the release workflow runs `cargo publish -p nsec-tree-rs` on version tags; the current version is 0.1.0). Add it to `Cargo.toml`:
+
+```toml
+[dependencies]
+nsec-tree-rs = "0.1"
+# or, to track this repository instead:
+# nsec-tree-rs = { git = "https://github.com/forgesworn/heartwood" }
+```
+
+Signatures. Every fallible function returns `Result<_, HeartwoodError>`.
+
 ```rust
-use nsec_tree_rs::{from_mnemonic, from_nsec, npub_from_nsec, derive,
-                   derive_from_identity, derive_persona, derive_from_persona,
-                   create_blind_proof, create_full_proof, verify_proof,
-                   recover, encode_npub, encode_nsec, decode_npub, decode_nsec};
+// Roots
+fn from_mnemonic(mnemonic: &str, passphrase: Option<&str>) -> Result<TreeRoot, HeartwoodError>;
+fn from_nsec(nsec: &str) -> Result<TreeRoot, HeartwoodError>;           // HMAC intermediate: a different root from from_mnemonic
+fn from_nsec_bytes(nsec_bytes: &[u8; 32]) -> Result<TreeRoot, HeartwoodError>;
+fn generate_mnemonic() -> Result<Vec<String>, HeartwoodError>;          // 24 words, OS entropy
+fn npub_from_nsec(nsec: &str) -> Result<String, HeartwoodError>;        // bunker mode: no tree, no HMAC
 
-// Create a root from a 12-word mnemonic
-let root = from_mnemonic("word1 word2 ... word12", None)?;
+// Derivation
+fn derive(root: &TreeRoot, purpose: &str, index: u32) -> Result<Identity, HeartwoodError>;
+fn derive_from_identity(identity: &Identity, purpose: &str, index: u32) -> Result<Identity, HeartwoodError>;
+fn derive_persona(root: &TreeRoot, name: &str, index: Option<u32>) -> Result<Persona, HeartwoodError>;
+fn derive_from_persona(persona: &Persona, purpose: &str, index: Option<u32>) -> Result<Identity, HeartwoodError>;
 
-// Derive a child identity
-let identity = derive(&root, "social", 0)?;
-println!("{}", identity.npub);   // npub1...
-println!("{}", identity.nsec()); // nsec1...
+// Linkage proofs
+fn create_blind_proof(root: &TreeRoot, child: &Identity) -> Result<LinkageProof, HeartwoodError>;
+fn create_full_proof(root: &TreeRoot, child: &Identity) -> Result<LinkageProof, HeartwoodError>;
+fn verify_proof(proof: &LinkageProof) -> Result<bool, HeartwoodError>;  // Ok(false) for a bad proof; Err only for unparseable hex
 
-// Derive a named persona
-let persona = derive_persona(&root, "work", None)?;
+// Recovery
+fn recover(root: &TreeRoot, purposes: &[String], scan_range: Option<u32>)
+    -> Result<HashMap<String, Vec<Identity>>, HeartwoodError>;
 
-// Derive a sub-identity from an existing identity
-let sub = derive_from_identity(&identity, "notifications", 0)?;
+// Encoding (bech32)
+fn encode_npub(public_key: &[u8; 32]) -> String;
+fn encode_nsec(private_key: &[u8; 32]) -> String;
+fn decode_npub(npub: &str) -> Result<[u8; 32], HeartwoodError>;
+fn decode_nsec(nsec: &str) -> Result<Zeroizing<[u8; 32]>, HeartwoodError>;
+```
 
-// Derive a sub-identity from a persona
-let sub = derive_from_persona(&persona, "dms", None)?;
+What the `None` arguments mean:
 
-// Get the npub for a bare nsec (bunker mode -- no tree derivation)
-let npub = npub_from_nsec("nsec1...")?;
+- `from_mnemonic(.., None)`: no BIP-39 passphrase, the same as `Some("")`. Any passphrase gives a different root. The phrase may be any valid BIP-39 length.
+- `derive_persona(.., None)` and `derive_from_persona(.., None)`: index 0. `derive_persona(&root, "work", None)` equals `derive(&root, "nostr:persona:work", 0)`. `derive` and `derive_from_identity` take a plain `u32` and have no default.
+- `recover(.., None)`: scan indices `0..20` for each purpose. `Some(n)` must be in `1..=10_000`, otherwise `Err(HeartwoodError::InvalidScanRange)`.
+- `derive_persona` rejects an empty or whitespace-only name, `|`, and control characters with `HeartwoodError::InvalidPersonaName`.
 
-// Prove ownership of a child key (blind = no purpose/index revealed)
-let proof = create_blind_proof(&root, &identity)?;
-assert!(verify_proof(&proof)?);
+Types:
 
-// Recover identities by scanning purposes
-let found = recover(&root, &["social".to_string(), "work".to_string()], None)?;
+- `TreeRoot { master_pubkey: String }`: `master_pubkey` is the bech32 `npub1...`. The secret is private; `root.destroy()` zeroises it.
+- `Identity { npub: String, private_key: Zeroizing<[u8; 32]>, public_key: [u8; 32], purpose: String, index: u32 }`. `npub` is a stored field; `identity.nsec()` is a method because the bech32 nsec is computed on demand and never kept in memory.
+- `Persona { identity: Identity, name: String, index: u32 }`. `index` is the resolved value, so it is `0` when `None` was passed.
+- `LinkageProof { master_pubkey: String, child_pubkey: String, purpose: Option<String>, index: Option<u32>, attestation: String, signature: String }`. Unlike `TreeRoot`, the two pubkeys here are 64-character lowercase hex, not npub. `purpose` and `index` are `None` for a blind proof and `Some(..)` for a full proof. `signature` is 128 hex characters (BIP-340 Schnorr).
+
+```rust
+use nsec_tree_rs::{create_blind_proof, create_full_proof, decode_npub, decode_nsec,
+                   derive, derive_from_identity, derive_from_persona, derive_persona,
+                   encode_npub, encode_nsec, from_mnemonic, from_nsec, npub_from_nsec,
+                   recover, verify_proof, HeartwoodError};
+
+fn main() -> Result<(), HeartwoodError> {
+    // Create a root from a BIP-39 mnemonic (placeholder words), no passphrase
+    let root = from_mnemonic("word1 word2 ... word12", None)?;
+
+    // Derive a child identity
+    let identity = derive(&root, "social", 0)?;
+    let nsec: String = identity.nsec(); // nsec1..., computed on demand; never log it
+
+    // Derive a named persona, then sub-identities from an identity or a persona
+    let persona = derive_persona(&root, "work", None)?;
+    let sub = derive_from_identity(&identity, "notifications", 0)?;
+    let dms = derive_from_persona(&persona, "dms", None)?;
+
+    // Blind proof: proves ownership without revealing purpose or index
+    let blind = create_blind_proof(&root, &identity)?;
+    assert!(blind.purpose.is_none() && blind.index.is_none());
+    assert!(verify_proof(&blind)?);
+
+    // Full proof: also reveals purpose and index
+    let full = create_full_proof(&root, &identity)?;
+    assert_eq!(full.purpose.as_deref(), Some("social"));
+    assert_eq!(full.index, Some(0));
+    assert!(verify_proof(&full)?);
+
+    // Bare nsec (bunker mode): npub only, or a root via an HMAC intermediate
+    let npub = npub_from_nsec(&nsec)?;
+    let nsec_root = from_nsec(&nsec)?;
+
+    // Encoding round trips
+    let public_key: [u8; 32] = decode_npub(&identity.npub)?;
+    assert_eq!(encode_npub(&public_key), identity.npub);
+    let private_key = decode_nsec(&nsec)?; // Zeroizing<[u8; 32]>
+    assert_eq!(encode_nsec(&private_key), nsec);
+
+    // Recover identities by scanning purposes (default: 20 indices each)
+    let found = recover(&root, &["social".to_string(), "work".to_string()], None)?;
+    assert_eq!(found["social"].len(), 20);
+    Ok(())
+}
 ```
 
 This crate is a standalone reference/compatibility library now -- it is no longer a dependency of `heartwood-bridge` or of any binary in this repo. The same HMAC-SHA256 derivation scheme runs on-device, in the `heartwood-esp32` firmware.

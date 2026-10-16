@@ -81,13 +81,15 @@ sudo chown heartwood:heartwood /var/lib/heartwood/bridge.secret
 sudo chmod 600 /var/lib/heartwood/bridge.secret
 ```
 
-For Docker, bind-mount a host directory as the data dir so the same copy
-works:
+For Docker, bind-mount a host directory as the data dir. The image runs as
+uid 10001, so the file must be owned by that uid to be readable:
 
 ```bash
 sudo mkdir -p /var/lib/heartwood
-sudo cp bridge.secret /var/lib/heartwood/bridge.secret
+sudo install -m 0600 -o 10001 bridge.secret /var/lib/heartwood/bridge.secret
 ```
+
+(Ledger transports use no `bridge.secret`; skip this step for them.)
 
 ## Step 4: Configure the serial port and relays
 
@@ -95,7 +97,10 @@ The bridge needs to know which serial device the signer enumerates on, and
 which relays to use. Set these with:
 
 - **Environment variables** — `HEARTWOOD_SERIAL_PORT` (e.g. `/dev/ttyUSB0`)
-  and, optionally, `HEARTWOOD_RELAYS` (comma-separated relay URLs)
+  and, optionally, `HEARTWOOD_RELAYS` (comma-separated relay URLs),
+  `HEARTWOOD_TRANSPORT` (`serial`, the default, or `ledger-tcp` /
+  `ledger-hid` for a Ledger) and `HEARTWOOD_DATA_DIR` (default
+  `/var/lib/heartwood`)
 - **`config.json`** in the data directory:
 
   ```json
@@ -105,13 +110,19 @@ which relays to use. Set these with:
   }
   ```
 
-If installed via the install script, edit the `Environment=` lines in
-`/etc/systemd/system/heartwood-bridge.service`:
+  The optional `transport` key takes the same values as
+  `HEARTWOOD_TRANSPORT`. An environment variable wins over `config.json`.
+
+If installed via the install script, set the variables in a systemd drop-in.
+Re-running the install script rewrites the unit file itself, but a drop-in
+survives that:
 
 ```bash
-sudo nano /etc/systemd/system/heartwood-bridge.service
-# adjust Environment=HEARTWOOD_SERIAL_PORT=... and add
-# Environment=HEARTWOOD_RELAYS=wss://relay.damus.io,wss://nos.lol
+sudo systemctl edit heartwood-bridge
+# in the editor, add:
+#   [Service]
+#   Environment=HEARTWOOD_SERIAL_PORT=/dev/ttyUSB0
+#   Environment=HEARTWOOD_RELAYS=wss://relay.damus.io,wss://nos.lol
 sudo systemctl daemon-reload
 ```
 
@@ -151,8 +162,15 @@ has no key of its own to protect.
 Which clients are trusted, and what each is allowed to sign, is a policy the
 signer itself enforces — configure it via Sapwood, not on the Linux box.
 
-1. In Sapwood, find the `bunker://` connection string for the identity you
-   want to use
+1. Get the `bunker://` connection string for the identity you want to use.
+   Sapwood shows it. The running bridge also logs one per master identity at
+   startup (`sudo journalctl -u heartwood-bridge | grep 'client connection
+   string'`), and `heartwood-bridge --bunker-uri` prints them and exits
+   without connecting to any relay, which is the route if you provisioned
+   offline with the `provision` CLI and never used Sapwood. It reads the same
+   configuration as the service, and the string embeds the relays it finds,
+   so run it with the same `HEARTWOOD_*` values (or keep them in
+   `config.json`)
 2. Open your Nostr client (Bark, Amethyst, etc.) and choose "Login with
    bunker" / "NIP-46 / Nostr Connect"
 3. Paste the connection string
