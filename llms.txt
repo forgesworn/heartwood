@@ -215,7 +215,7 @@ Any standard NIP-46 (Nostr Connect) client can pair with the hardware signer via
 - NIP-46 messages are NIP-44 encrypted end-to-end between client and device
 - `bridge.secret` authenticates the USB serial session only -- it is not a signing key; treat the file as a local secret (0600 permissions)
 - No inbound listener -- the bridge only makes outbound WebSocket connections to relays; no open ports, no Tor hidden service
-- NIP-42 AUTH is unsupported -- the bridge holds no key, so it cannot sign an auth challenge
+- NIP-42 AUTH is signed on the device (frame `0x36`, one kind 22242 per master) only when a relay answers the REQ with `auth-required:`; firmware without that frame NACKs it
 - 59 tests in heartwood-core (`nsec-tree-rs`), including 5 frozen protocol vectors cross-validated against the TypeScript reference implementation
 
 ## Competitors
