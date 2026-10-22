@@ -6,7 +6,8 @@
 //!
 //! NIP-42 AUTH: the bridge holds no key, so the device signs. A relay's
 //! `["AUTH", challenge]` is only remembered; the bridge signs in only when the
-//! relay refuses our subscription with `auth-required:`, so relays that offer
+//! relay refuses our subscription with `auth-required:` (or `restricted:`
+//! after sending a challenge), so relays that offer
 //! AUTH without needing it never learn which keys sit behind this connection.
 //! It then signs in once per master on that one connection and challenge
 //! (NIP-42 lets a connection hold several authenticated keys, and the
@@ -105,6 +106,8 @@ struct AuthState {
     challenge: Option<String>,
     /// The relay refused our REQ with `auth-required:`.
     wanted: bool,
+    /// When the relay first asked; bounds the wait for its challenge.
+    wanted_at: Option<tokio::time::Instant>,
     /// Signatures have been requested from the device.
     started: bool,
     /// Ids of our AUTH events the relay has not yet answered.
@@ -201,20 +204,27 @@ async fn connect_and_serve(
                     Flow::SubscriptionClosed(msg) => {
                         subscribed = false;
                         let auth_required = msg.starts_with("auth-required:");
-                        if auth.authenticated && (auth_required || msg.starts_with("restricted:")) {
+                        let restricted = msg.starts_with("restricted:");
+                        if auth.authenticated && (auth_required || restricted) {
                             return Err(AuthFailure(format!(
                                 "relay refused the subscription after AUTH: {msg}"
                             ))
                             .into());
                         }
-                        if !auth_required {
+                        // `restricted:` from a relay that has already sent a
+                        // challenge is a sign-in prompt too: some gates word
+                        // every refusal that way.
+                        if !(auth_required || (restricted && auth.challenge.is_some())) {
                             // Without the REQ no request ever reaches the
                             // device again; logging alone left the bridge
                             // connected but deaf.
                             anyhow::bail!("subscription closed by relay: {msg}");
                         }
                         tracing::info!(relay = %url, "relay requires AUTH before serving requests");
-                        auth.wanted = true;
+                        if !auth.wanted {
+                            auth.wanted = true;
+                            auth.wanted_at = Some(tokio::time::Instant::now());
+                        }
                     }
                     Flow::AuthChallenge(challenge) => {
                         if auth.challenge.is_some() {
@@ -277,6 +287,13 @@ async fn connect_and_serve(
                 let idle = last_inbound.elapsed();
                 if idle >= IDLE_LIMIT {
                     anyhow::bail!("no relay traffic for {}s; connection presumed dead", idle.as_secs());
+                }
+                // Asked to sign in but never given a usable challenge: the
+                // subscription is closed, so re-dial rather than sit deaf.
+                if let Some(wanted_at) = auth.wanted_at {
+                    if !auth.started && wanted_at.elapsed() >= AUTH_OK_TIMEOUT {
+                        anyhow::bail!("relay required AUTH but sent no usable challenge");
+                    }
                 }
                 if let Some(sent_at) = auth.sent_at {
                     if !auth.awaiting_ok.is_empty() && sent_at.elapsed() >= AUTH_OK_TIMEOUT {
@@ -576,6 +593,7 @@ mod tests {
     use tokio::net::TcpListener;
 
     const CHALLENGE: &str = "challenge-7f3a";
+    const REQUIRED: &str = "auth-required: sign in first";
 
     #[derive(Clone, Copy)]
     struct Gate {
@@ -586,6 +604,8 @@ mod tests {
         gated: bool,
         /// Answer valid AUTH events with `OK true`.
         accept_auth: bool,
+        /// The CLOSED message for a refused REQ.
+        refusal: &'static str,
     }
 
     /// One-connection relay modelled on a NIP-42 gate: a connection may sign
@@ -615,7 +635,7 @@ mod tests {
                         let event = event_msg(NIP46_KIND, MASTER, "e".repeat(64));
                         write.send(Message::Text(event)).await.unwrap();
                     } else {
-                        let closed = json!(["CLOSED", sub, "auth-required: sign in first"]);
+                        let closed = json!(["CLOSED", sub, gate.refusal]);
                         write.send(Message::Text(closed.to_string())).await.unwrap();
                         if !challenge_sent {
                             write.send(Message::Text(auth_msg.clone())).await.unwrap();
@@ -763,21 +783,49 @@ mod tests {
 
     #[tokio::test]
     async fn signs_in_as_every_master_when_the_relay_requires_auth() {
-        let gate = Gate { challenge_on_connect: true, gated: true, accept_auth: true };
+        let gate =
+            Gate { challenge_on_connect: true, gated: true, accept_auth: true, refusal: REQUIRED };
         assert_signs_in_and_resubscribes(gate).await;
     }
 
     #[tokio::test]
     async fn signs_in_when_auth_required_arrives_before_the_challenge() {
-        let gate = Gate { challenge_on_connect: false, gated: true, accept_auth: true };
+        let gate =
+            Gate { challenge_on_connect: false, gated: true, accept_auth: true, refusal: REQUIRED };
         assert_signs_in_and_resubscribes(gate).await;
+    }
+
+    #[tokio::test]
+    async fn a_restricted_refusal_after_a_challenge_also_prompts_sign_in() {
+        let gate = Gate {
+            challenge_on_connect: true,
+            gated: true,
+            accept_auth: true,
+            refusal: "restricted: not allowlisted",
+        };
+        assert_signs_in_and_resubscribes(gate).await;
+    }
+
+    #[tokio::test]
+    async fn a_restricted_refusal_without_a_challenge_is_a_plain_close() {
+        let gate = Gate {
+            challenge_on_connect: false,
+            gated: true,
+            accept_auth: true,
+            refusal: "restricted: not allowlisted",
+        };
+        let (_url, _log, _saw, conn) = start(gate, true).await;
+        let result = tokio::time::timeout(Duration::from_secs(5), conn).await.unwrap().unwrap();
+        let err = result.expect_err("closed subscription");
+        assert!(err.downcast_ref::<AuthFailure>().is_none(), "normal back-off: {err:#}");
     }
 
     #[tokio::test]
     async fn a_challenge_from_a_relay_that_does_not_require_auth_is_never_signed() {
         // Offered AUTH, not needed: nothing is signed, so the relay never
         // learns which keys sit behind this connection.
-        let gate = Gate { challenge_on_connect: true, gated: false, accept_auth: true };
+        let gate =
+            Gate { challenge_on_connect: true, gated: false, accept_auth: true, refusal: REQUIRED };
         let (_url, mut log, mut saw, conn) = start(gate, true).await;
         assert_eq!(next(&mut log).await[0], "REQ");
         assert_eq!(next(&mut saw).await, Saw::Request("e".repeat(64)));
@@ -797,7 +845,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_device_that_cannot_sign_ends_the_connection_without_sending_auth() {
-        let gate = Gate { challenge_on_connect: true, gated: true, accept_auth: true };
+        let gate =
+            Gate { challenge_on_connect: true, gated: true, accept_auth: true, refusal: REQUIRED };
         let (_url, mut log, _saw, conn) = start(gate, false).await;
         let err = finished_with_auth_failure(conn).await;
         assert!(err.contains("would not sign"), "{err}");
@@ -808,7 +857,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_refused_auth_ends_the_connection_without_resubscribing() {
-        let gate = Gate { challenge_on_connect: true, gated: true, accept_auth: false };
+        let gate =
+            Gate { challenge_on_connect: true, gated: true, accept_auth: false, refusal: REQUIRED };
         let (_url, mut log, _saw, conn) = start(gate, true).await;
         let err = finished_with_auth_failure(conn).await;
         assert!(err.contains("refused AUTH"), "{err}");
