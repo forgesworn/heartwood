@@ -31,8 +31,12 @@ use anyhow::{anyhow, bail, Context, Result};
 use serde_json::Value;
 
 /// Relays used when neither the env nor `config.json` names any.
+/// damus kept, but not first: it rate-limit-bans addresses outright
+/// ("banned: too many rate-limit violations", seen 8 and 30 October and
+/// 1 November 2026), so a default that leads with it leaves a fresh start
+/// dead on any address it has flagged.
 pub const DEFAULT_RELAYS: &[&str] =
-    &["wss://relay.damus.io", "wss://nos.lol", "wss://relay.trotters.cc"];
+    &["wss://relay.primal.net", "wss://relay.damus.io", "wss://nos.lol", "wss://relay.trotters.cc"];
 
 /// How the bridge reaches the signing device.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
