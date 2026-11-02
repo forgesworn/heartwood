@@ -45,7 +45,7 @@ pub fn derive(root: &TreeRoot, purpose: &str, index: u32) -> Result<Identity, He
         let mut derived: [u8; 32] = result.into_bytes().into();
 
         // Try to create a valid secp256k1 signing key
-        match SigningKey::from_bytes(&derived) {
+        match SigningKey::from_bytes((&derived).into()) {
             Ok(signing_key) => {
                 let verifying_key = signing_key.verifying_key();
                 let public_key: [u8; 32] = verifying_key.to_bytes().into();

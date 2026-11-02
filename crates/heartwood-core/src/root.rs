@@ -14,7 +14,7 @@ type HmacSha256 = Hmac<Sha256>;
 /// Derives the BIP-340 x-only public key and encodes it as npub.
 /// Takes the secret by reference to avoid copying it onto the stack.
 pub(crate) fn create_tree_root(secret: &[u8; 32]) -> Result<TreeRoot, HeartwoodError> {
-    let signing_key = SigningKey::from_bytes(secret)
+    let signing_key = SigningKey::from_bytes(secret.into())
         .map_err(|e| HeartwoodError::Derivation(format!("invalid secret key: {e}")))?;
     let verifying_key = signing_key.verifying_key();
     let pubkey_bytes: [u8; 32] = verifying_key.to_bytes().into();
@@ -44,7 +44,7 @@ pub fn from_nsec_bytes(nsec_bytes: &[u8; 32]) -> Result<TreeRoot, HeartwoodError
 /// returned npub is the identity the bunker signs on behalf of.
 pub fn npub_from_nsec(nsec: &str) -> Result<String, HeartwoodError> {
     let nsec_bytes = decode_nsec(nsec)?;
-    let signing_key = SigningKey::from_bytes(&*nsec_bytes)
+    let signing_key = SigningKey::from_bytes((&*nsec_bytes).into())
         .map_err(|e| HeartwoodError::Derivation(format!("invalid secret key: {e}")))?;
     let verifying_key = signing_key.verifying_key();
     let pubkey_bytes: [u8; 32] = verifying_key.to_bytes().into();
@@ -92,7 +92,7 @@ pub fn from_mnemonic(mnemonic: &str, passphrase: Option<&str>) -> Result<TreeRoo
 
     let seed = zeroize::Zeroizing::new(parsed.to_seed(passphrase.unwrap_or("")));
 
-    let master = bip32::XPrv::new(*seed)
+    let master = bip32::XPrv::new(&*seed)
         .map_err(|e| HeartwoodError::Derivation(format!("BIP-32 master key failed: {e}")))?;
 
     // Parse derivation path and derive step by step
