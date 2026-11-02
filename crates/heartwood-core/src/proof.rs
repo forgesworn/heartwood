@@ -1,6 +1,6 @@
 // crates/heartwood-core/src/proof.rs
-use k256::schnorr::{Signature, SigningKey, VerifyingKey};
 use k256::schnorr::signature::{Signer, Verifier};
+use k256::schnorr::{Signature, SigningKey, VerifyingKey};
 
 use crate::encoding::bytes_to_hex;
 use crate::types::{HeartwoodError, Identity, LinkageProof, TreeRoot};
@@ -145,10 +145,8 @@ pub fn verify_proof(proof: &LinkageProof) -> Result<bool, HeartwoodError> {
     let master_bytes =
         hex::decode(&proof.master_pubkey).map_err(|_| HeartwoodError::InvalidProof)?;
 
-    let master_array: &[u8; 32] = master_bytes
-        .as_slice()
-        .try_into()
-        .map_err(|_| HeartwoodError::InvalidProof)?;
+    let master_array: &[u8; 32] =
+        master_bytes.as_slice().try_into().map_err(|_| HeartwoodError::InvalidProof)?;
     let verifying_key =
         VerifyingKey::from_bytes(master_array.into()).map_err(|_| HeartwoodError::InvalidProof)?;
 
