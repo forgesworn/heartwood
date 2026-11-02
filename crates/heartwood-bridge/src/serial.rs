@@ -32,6 +32,14 @@ const SIGN_TIMEOUT: Duration = Duration::from_secs(45);
 const WRITE_CHUNK: usize = 64;
 const WRITE_CHUNK_DELAY: Duration = Duration::from_millis(6);
 
+/// `RELAY_AUTH` (host -> device): sign a NIP-42 kind 22242 relay AUTH event as
+/// one master. Payload `[master_pk 32][created_at u64-be 8][url_len u8][url]
+/// [challenge…]`; reply `SIGN_ENVELOPE_RESPONSE` (0x35) with the signed event
+/// JSON, or `NACK`. PROPOSED: not yet in the firmware's `common/src/types.rs`.
+/// Firmware without it answers an unknown frame with `NACK`, which the bridge
+/// treats as "this device cannot sign relay AUTH".
+pub const FRAME_TYPE_RELAY_AUTH: u8 = 0x36;
+
 /// Anything the session can speak over: a real serial port, or — in tests — an
 /// in-process socket pair. Blanket-implemented for every suitable byte stream.
 pub trait ReadWrite: std::io::Read + std::io::Write + Send {}
@@ -142,6 +150,22 @@ impl SerialSession {
             bail!("expected FIRMWARE_INFO_RESPONSE (0x5A), got {ty:#04x}");
         }
         serde_json::from_slice(&payload).context("parsing firmware-info JSON")
+    }
+
+    /// Ask the device to sign a NIP-42 relay AUTH event (see
+    /// [`FRAME_TYPE_RELAY_AUTH`]). `None` when the device NACKs: unknown
+    /// master, locked, or firmware that predates the frame.
+    pub fn sign_relay_auth(&mut self, relay_auth_payload: &[u8]) -> Result<Option<String>> {
+        let (ty, resp) =
+            self.transact(FRAME_TYPE_RELAY_AUTH, relay_auth_payload, CONTROL_TIMEOUT)?;
+        match ty {
+            FRAME_TYPE_SIGN_ENVELOPE_RESPONSE => {
+                let json = String::from_utf8(resp).context("AUTH event was not UTF-8")?;
+                Ok(Some(json))
+            }
+            FRAME_TYPE_NACK => Ok(None),
+            other => bail!("unexpected response to RELAY_AUTH: {other:#04x}"),
+        }
     }
 
     /// Run a NIP-46 request through the device's inline signing path. Returns
@@ -424,6 +448,33 @@ mod tests {
     fn sign_non_utf8_response_is_an_error() {
         let mut session = always_replies(FRAME_TYPE_SIGN_ENVELOPE_RESPONSE, vec![0xff, 0xfe]);
         assert!(session.sign(b"payload").is_err());
+    }
+
+    // --- sign_relay_auth (0x36 → 0x35 | 0x15) ----------------------------
+
+    #[test]
+    fn sign_relay_auth_sends_the_frame_and_returns_the_event() {
+        let event = r#"{"id":"ee","kind":22242}"#;
+        let mut session = session_with(move |ty, payload| {
+            assert_eq!(ty, FRAME_TYPE_RELAY_AUTH, "sends RELAY_AUTH");
+            assert_eq!(payload, b"auth-payload".to_vec(), "payload verbatim");
+            Some((FRAME_TYPE_SIGN_ENVELOPE_RESPONSE, event.as_bytes().to_vec()))
+        });
+        assert_eq!(session.sign_relay_auth(b"auth-payload").unwrap().as_deref(), Some(event));
+    }
+
+    #[test]
+    fn sign_relay_auth_nack_is_none_not_an_error() {
+        // Today's firmware NACKs the unknown frame: a clean "cannot", so the
+        // worker keeps its session rather than reopening the port.
+        let mut session = always_replies(FRAME_TYPE_NACK, vec![]);
+        assert_eq!(session.sign_relay_auth(b"p").unwrap(), None);
+    }
+
+    #[test]
+    fn sign_relay_auth_unexpected_frame_type_is_an_error() {
+        let mut session = always_replies(FRAME_TYPE_SESSION_ACK, vec![0x00]);
+        assert!(session.sign_relay_auth(b"p").is_err());
     }
 
     // --- firmware_info (0x59 → 0x5A) -------------------------------------

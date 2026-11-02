@@ -83,7 +83,7 @@ No web UI, no setup wizard: `heartwood-bridge` is configured entirely from its e
 - **No key, no plaintext on the host.** All NIP-44 decryption, NIP-46 dispatch and signing happen on the USB-tethered device; the bridge only pumps ciphertext in and signed events out.
 - **`bridge.secret`** authenticates the serial session (constant-time compared in firmware; setting it on the device requires a physical button hold). Treat the file as a local secret (mode 0600).
 - **No inbound listener.** The bridge only makes outbound WebSocket connections to relays — no open ports, no Tor hidden service (Tor previously existed solely to front the now-deleted web UI).
-- **NIP-42 AUTH is unsupported.** The bridge holds no key, so it cannot sign an auth challenge; relays that require AUTH for kind:24133 are out of scope.
+- **NIP-42 AUTH is signed on the device.** The bridge holds no key, so the device signs: when a relay refuses the subscription with `auth-required:`, the bridge asks the device for one kind 22242 event per master (`RELAY_AUTH`, frame `0x36`) on that relay's challenge, using the configured relay URL, then re-sends its REQ. Relays that offer AUTH without requiring it are never signed in to. Firmware without frame `0x36` NACKs it, so AUTH-gated relays stay unreachable until the firmware supports it.
 
 ## Deployment
 

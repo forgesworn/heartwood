@@ -57,8 +57,12 @@ anything is a vulnerability by definition.
 
 - The bridge trusts the device's NACK semantics: a rejected request is
   reported but not diagnosed (the bridge cannot see why, by design).
-- NIP-42 AUTH is unsupported — the bridge holds no key, so it cannot sign
-  relay auth challenges.
+- NIP-42 AUTH is signed on the device (`RELAY_AUTH`, frame `0x36`), and only
+  when a relay requires it. The bridge asks only for relays in its own
+  configured list, but an authenticated bridge session can obtain an AUTH
+  signature for any relay URL the device accepts, so whoever controls the
+  bridge host can sign in to relays as the device's keys. An AUTH signature
+  proves identity to one relay; it signs no content.
 - Request timing/metadata is visible to relays regardless of the bridge.
 - No independent security audit has been completed yet.
 

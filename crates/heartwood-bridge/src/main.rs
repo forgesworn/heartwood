@@ -106,7 +106,7 @@ async fn main() -> Result<()> {
     );
     let relays = config.relays.clone();
 
-    let (job_tx, job_rx) = mpsc::channel::<relay::RequestJob>(JOB_QUEUE);
+    let (job_tx, job_rx) = mpsc::channel::<relay::DeviceJob>(JOB_QUEUE);
     let (resp_tx, _) = broadcast::channel::<String>(RESP_QUEUE);
     let (masters_tx, masters_rx) = oneshot::channel::<Vec<String>>();
 

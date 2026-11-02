@@ -18,7 +18,7 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio_tungstenite::tungstenite::Message;
 
 use crate::dedup::Seen;
-use crate::relay::{run_relay, RequestJob};
+use crate::relay::{run_relay, DeviceJob};
 use crate::serial::SerialSession;
 use heartwood_frame::{
     self as frame, FRAME_TYPE_ENCRYPTED_REQUEST, FRAME_TYPE_NACK, FRAME_TYPE_PROVISION_LIST,
@@ -171,12 +171,12 @@ async fn relay_to_serial_to_device_e2e() {
     tokio::spawn(run_mock_relay(listener, published_tx));
 
     // 5) Wire the pump: a serial worker thread + the real relay client.
-    let (job_tx, mut job_rx) = mpsc::channel::<RequestJob>(8);
+    let (job_tx, mut job_rx) = mpsc::channel::<DeviceJob>(8);
     let (resp_tx, _) = broadcast::channel::<String>(8);
     let resp_for_worker = resp_tx.clone();
     let worker = std::thread::spawn(move || {
-        if let Some(job) = job_rx.blocking_recv() {
-            let payload = job.request.encrypted_request_payload(STAMP).unwrap();
+        if let Some(DeviceJob::Request(request)) = job_rx.blocking_recv() {
+            let payload = request.encrypted_request_payload(STAMP).unwrap();
             let signed = session.sign(&payload).expect("sign").expect("not NACKed");
             let _ = resp_for_worker.send(signed);
         }
