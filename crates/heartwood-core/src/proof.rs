@@ -1,6 +1,6 @@
 // crates/heartwood-core/src/proof.rs
+use k256::schnorr::signature::{Signer, Verifier};
 use k256::schnorr::{Signature, SigningKey, VerifyingKey};
-use signature::{Signer, Verifier};
 
 use crate::encoding::bytes_to_hex;
 use crate::types::{HeartwoodError, Identity, LinkageProof, TreeRoot};
@@ -55,7 +55,7 @@ pub fn create_blind_proof(
     root: &TreeRoot,
     child: &Identity,
 ) -> Result<LinkageProof, HeartwoodError> {
-    let signing_key = SigningKey::from_bytes(root.secret())
+    let signing_key = SigningKey::from_bytes(root.secret().into())
         .map_err(|e| HeartwoodError::Derivation(format!("invalid root key: {e}")))?;
 
     let master_hex = bytes_to_hex(&signing_key.verifying_key().to_bytes());
@@ -92,7 +92,7 @@ pub fn create_full_proof(
 ) -> Result<LinkageProof, HeartwoodError> {
     validate_proof_purpose(&child.purpose)?;
 
-    let signing_key = SigningKey::from_bytes(root.secret())
+    let signing_key = SigningKey::from_bytes(root.secret().into())
         .map_err(|e| HeartwoodError::Derivation(format!("invalid root key: {e}")))?;
 
     let master_hex = bytes_to_hex(&signing_key.verifying_key().to_bytes());
@@ -145,8 +145,10 @@ pub fn verify_proof(proof: &LinkageProof) -> Result<bool, HeartwoodError> {
     let master_bytes =
         hex::decode(&proof.master_pubkey).map_err(|_| HeartwoodError::InvalidProof)?;
 
+    let master_array: &[u8; 32] =
+        master_bytes.as_slice().try_into().map_err(|_| HeartwoodError::InvalidProof)?;
     let verifying_key =
-        VerifyingKey::from_bytes(&master_bytes).map_err(|_| HeartwoodError::InvalidProof)?;
+        VerifyingKey::from_bytes(master_array.into()).map_err(|_| HeartwoodError::InvalidProof)?;
 
     let sig_bytes = hex::decode(&proof.signature).map_err(|_| HeartwoodError::InvalidProof)?;
 
