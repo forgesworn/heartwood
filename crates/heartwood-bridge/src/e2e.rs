@@ -130,7 +130,7 @@ async fn run_mock_relay(listener: TcpListener, published_tx: oneshot::Sender<Val
                 assert_eq!(v[2]["kinds"][0], 24133, "subscribes for kind 24133");
                 assert_eq!(v[2]["#p"][0], MASTER_HEX, "filters on our master");
                 let event = json!(["EVENT", "heartwood-bridge", request_event()]);
-                write.send(Message::Text(event.to_string())).await.unwrap();
+                write.send(Message::Text(event.to_string().into())).await.unwrap();
                 break;
             }
         }

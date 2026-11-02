@@ -172,7 +172,7 @@ async fn connect_and_serve(
         "since": since,
     }])
     .to_string();
-    write.send(Message::Text(req.clone())).await.context("sending REQ")?;
+    write.send(Message::Text((req.clone()).into())).await.context("sending REQ")?;
     let mut subscribed = true;
 
     let mut resp_rx = resp_tx.subscribe();
@@ -300,7 +300,7 @@ async fn connect_and_serve(
                         return Err(AuthFailure("relay never answered our AUTH".into()).into());
                     }
                 }
-                tokio::time::timeout(SEND_TIMEOUT, write.send(Message::Ping(Vec::new())))
+                tokio::time::timeout(SEND_TIMEOUT, write.send(Message::Ping(Vec::new().into())))
                     .await
                     .context("keepalive ping send timed out")?
                     .context("sending keepalive ping")?;
@@ -328,7 +328,7 @@ async fn send_text<S>(write: &mut S, text: String) -> Result<()>
 where
     S: futures_util::Sink<Message, Error = tokio_tungstenite::tungstenite::Error> + Unpin,
 {
-    tokio::time::timeout(SEND_TIMEOUT, write.send(Message::Text(text)))
+    tokio::time::timeout(SEND_TIMEOUT, write.send(Message::Text((text).into())))
         .await
         .context("send timed out")?
         .context("send failed")
@@ -618,7 +618,7 @@ mod tests {
         let auth_msg = json!(["AUTH", CHALLENGE]).to_string();
         let mut challenge_sent = gate.challenge_on_connect;
         if challenge_sent {
-            write.send(Message::Text(auth_msg.clone())).await.unwrap();
+            write.send(Message::Text((auth_msg.clone().into()))).await.unwrap();
         }
         let mut signed_in: HashSet<String> = HashSet::new();
         while let Some(Ok(msg)) = read.next().await {
@@ -631,14 +631,14 @@ mod tests {
                     let ps: Vec<&str> =
                         v[2]["#p"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
                     if !gate.gated || ps.iter().all(|p| signed_in.contains(*p)) {
-                        write.send(Message::Text(json!(["EOSE", sub]).to_string())).await.unwrap();
+                        write.send(Message::Text(json!(["EOSE", sub]).to_string().into())).await.unwrap();
                         let event = event_msg(NIP46_KIND, MASTER, "e".repeat(64));
-                        write.send(Message::Text(event)).await.unwrap();
+                        write.send(Message::Text((event).into())).await.unwrap();
                     } else {
                         let closed = json!(["CLOSED", sub, gate.refusal]);
-                        write.send(Message::Text(closed.to_string())).await.unwrap();
+                        write.send(Message::Text((closed.to_string().into()))).await.unwrap();
                         if !challenge_sent {
-                            write.send(Message::Text(auth_msg.clone())).await.unwrap();
+                            write.send(Message::Text((auth_msg.clone().into()))).await.unwrap();
                             challenge_sent = true;
                         }
                     }
@@ -655,7 +655,7 @@ mod tests {
                         signed_in.insert(ev["pubkey"].as_str().unwrap().to_string());
                     }
                     let reply = json!(["OK", ev["id"], ok, if ok { "" } else { "restricted: no" }]);
-                    write.send(Message::Text(reply.to_string())).await.unwrap();
+                    write.send(Message::Text((reply.to_string().into()))).await.unwrap();
                 }
                 _ => {}
             }

@@ -13,7 +13,7 @@ categories = ["cryptography", "command-line-utilities"]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "io-util", "signal"] }
 # Relay transport. rustls (not native-tls) so the Pi cross-build needs no
 # system OpenSSL; webpki-roots bundles the Mozilla CA set.
-tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
 futures-util = { version = "0.3", features = ["sink"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
