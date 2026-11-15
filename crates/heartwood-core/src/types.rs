@@ -34,6 +34,8 @@ pub enum HeartwoodError {
     InvalidNpub,
     #[error("invalid proof")]
     InvalidProof,
+    #[error("invalid wrapped nsec or authentication failed")]
+    InvalidWrappedNsec,
     #[error("scan range must be 1..={MAX_SCAN_RANGE}")]
     InvalidScanRange,
     #[error("invalid persona name: {0}")]
