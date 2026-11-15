@@ -19,5 +19,10 @@ rand_core = { version = "0.6", features = ["getrandom"] }
 bech32 = "0.11"
 hex = "0.4"
 thiserror = "2"
+aes-gcm = { version = "0.10", features = ["zeroize"] }
+aes = { version = "0.8", features = ["zeroize"] }
+hkdf = "0.12"
+base64 = "0.22"
 
 [dev-dependencies]
+serde_json = "1"

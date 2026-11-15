@@ -7,6 +7,8 @@ pub mod recover;
 pub mod root;
 pub mod types;
 pub mod validate;
+pub mod wrapped;
+pub use wrapped::{unwrap_nsec, wrap_nsec, UnwrappedNsec};
 
 pub use derive::{derive, derive_from_identity};
 pub use encoding::{decode_npub, decode_nsec, encode_npub, encode_nsec};
