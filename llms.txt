@@ -8,6 +8,12 @@ It is aimed at Nostr power users who want hardware-backed key security without r
 
 Heartwood is a direct replacement for nsecBunker (no VPS required), an iOS-compatible alternative to Amber (Android-only), and a multi-identity alternative to LNbits NSD (one key per device). The distinguishing feature is unlinkable-by-default multi-identity: one seed on the hardware signer derives unlimited separate identities that cannot be correlated by an observer unless you deliberately prove the link.
 
+## ForgeSworn ecosystem
+
+- [ForgeSworn library guide](https://forgesworn.dev/llms.txt): Find related libraries, tools and integration guides by task and runtime.
+- [ForgeSworn on GitHub](https://github.com/forgesworn): Browse the organisation’s public repositories.
+- [Project source](https://github.com/forgesworn/heartwood): Canonical source repository, documentation and release information.
+
 ## Getting Started
 
 Two pieces: a hardware signer and a bridge host (any small Linux box with a USB port and a network connection -- a Raspberry Pi Zero 2 W or similar). The signer is either an ESP32 running `heartwood-esp32` (default `serial` transport; keys provisioned over USB via [Sapwood](https://sapwood.forgesworn.dev) or the offline `provision` CLI) or a Ledger running `heartwood-ledger` (`HEARTWOOD_TRANSPORT=ledger-tcp` or `ledger-hid`; no `bridge.secret`). Real-device status for Ledger: `ledger-tcp` is proven end to end against the Speculos emulator only; `ledger-hid` (a physical Ledger over Linux hidraw) is implemented and its USB framing is unit-tested, but it has not been verified on physical hardware, so treat real Ledger devices as untested.
